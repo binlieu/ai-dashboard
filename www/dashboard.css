@@ -236,6 +236,12 @@ fieldset:disabled input {
     grid-template-rows: repeat(2, minmax(0, 1fr));
 }
 
+.camera-grid[data-layout="auto"][data-auto="six"] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+.camera-grid[data-layout="auto"][data-auto="nine"],
 .camera-grid[data-layout="3x3"] {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     grid-template-rows: repeat(3, minmax(0, 1fr));

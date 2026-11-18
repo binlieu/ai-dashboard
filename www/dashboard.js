@@ -799,7 +799,8 @@ function renderPage() {
     grid.classList.toggle('spotlight-single', spotlight && state.cameras.length === 1 && !info);
     const autoCount = state.cameras.length + (info ? 1 : 0);
     grid.dataset.auto = autoCount === 1 ? 'single' : autoCount === 2 ? 'pair'
-        : autoCount <= 4 ? 'quad' : 'many';
+        : autoCount <= 4 ? 'quad'
+        : mobile.matches ? 'many' : autoCount <= 6 ? 'six' : autoCount <= 9 ? 'nine' : 'many';
     dashboard.dataset.effectiveLayout = layout;
     grid.hidden = !state.cameras.length;
     find('#empty-state').hidden = Boolean(state.cameras.length);
