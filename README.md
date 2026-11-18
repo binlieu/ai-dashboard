@@ -1,6 +1,11 @@
 # Kasa camera dashboard
 
-A local macOS dashboard for up to 16 Kasa cameras sharing one Kasa account.
+A local macOS wall-display dashboard for up to 16 Kasa cameras sharing one Kasa
+account: live video in grid or Spotlight layouts, automatic camera rotation, a
+clock and weather tile, selectable themes, and landscape or portrait screens.
+Cameras are added by MAC address in the built-in Setup screen, and video stays
+on your network.
+
 `./start.sh` serves **http://127.0.0.1:1984/** with Python 3.9 and a pinned
 **go2rtc v1.9.15** bridge. Python uses only its standard library; the page has
 no build step, CDN, Node or npm dependency.
