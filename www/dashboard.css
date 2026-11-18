@@ -1071,7 +1071,7 @@ video-stream .info {
     --input-surface: #120f33;
     --info-surface: #120f33;
     --bar-surface: #120f33;
-    --stars: #afa9ec26;
+    --stars: #cecbf6b3;
 }
 
 :root[data-theme="observatory"] .camera-grid { gap: 6px; }
@@ -1086,11 +1086,18 @@ video-stream .info {
 :root[data-theme="observatory"] .empty-slot {
     background-color: var(--info-surface);
     background-image:
-        radial-gradient(circle at 13% 19%, var(--stars) 0.8px, transparent 1.3px),
-        radial-gradient(circle at 79% 12%, var(--stars) 0.6px, transparent 1.1px),
-        radial-gradient(circle at 91% 66%, var(--stars) 0.8px, transparent 1.3px),
-        radial-gradient(circle at 24% 84%, var(--stars) 0.6px, transparent 1.1px),
-        radial-gradient(circle at 62% 49%, var(--stars) 0.6px, transparent 1.1px);
+        radial-gradient(circle at 13% 19%, var(--stars) 1.4px, transparent 2.0px),
+        radial-gradient(circle at 79% 12%, var(--stars) 1.0px, transparent 1.6px),
+        radial-gradient(circle at 91% 66%, var(--stars) 1.4px, transparent 2.0px),
+        radial-gradient(circle at 24% 84%, var(--stars) 1.0px, transparent 1.6px),
+        radial-gradient(circle at 62% 49%, var(--stars) 1.0px, transparent 1.6px),
+        radial-gradient(circle at 41% 9%, var(--stars) 0.8px, transparent 1.4px),
+        radial-gradient(circle at 7% 58%, var(--stars) 0.8px, transparent 1.4px),
+        radial-gradient(circle at 70% 88%, var(--stars) 1.2px, transparent 1.8px),
+        radial-gradient(circle at 52% 27%, var(--stars) 0.8px, transparent 1.4px),
+        radial-gradient(circle at 87% 34%, var(--stars) 1.0px, transparent 1.6px),
+        radial-gradient(circle at 33% 62%, var(--stars) 0.8px, transparent 1.4px),
+        radial-gradient(circle at 96% 91%, var(--stars) 0.8px, transparent 1.4px);
 }
 
 :root[data-theme="observatory"] .camera-card.is-offline::after { border-radius: 10px; }
