@@ -96,7 +96,7 @@ after a stable run. The front server stays available during crash recovery.
 
 ## Using the dashboard
 
-Open **Setup** in the header to manage cameras. With an empty camera list, the
+Open **Setup** in the bottom status bar to manage cameras. With an empty camera list, the
 centred **Open Setup** button takes you to the same panel. Close the panel with
 **Close** or **Esc**; focus returns to Setup.
 
@@ -113,13 +113,48 @@ centred **Open Setup** button takes you to the same panel. Close the panel with
   “Restarting video…” banner disappears when visible cameras are Live again or
   after ten seconds; the existing players reconnect automatically.
 
-Choose **Auto**, **2×1**, **2×2**, **3×3** or **4×4** in the header. Fixed layouts
-mean columns × rows, fill the viewport, and letterbox video inside each cell.
-Unused cells show **Empty**. When there are more cameras than slots, use
+The video area fills the screen above a slim, always-visible status bar with the
+local time, date, and live, offline and connecting counts for the visible cameras.
+Camera labels show a status dot and state in words when video is not live;
+offline tiles have a red inset outline and show minutes since leaving Live (or
+first appearing if never live). Cameras missing from the network show **not found**
+and hold no video connection. Server, restart and layout-save messages remain
+visible in the status bar.
+
+Paging, layout and Setup controls fade out after four seconds without interaction.
+Move the pointer, click, scroll, touch, or press a key to reveal them. Setup, focus
+inside the status bar, or a pointer over the bar keeps controls visible. Empty
+camera lists and camera-list failures also keep controls visible. Idle displays
+hide the cursor over video and hide **Empty** labels; reduced-motion preferences
+disable the fade.
+
+Choose **Auto**, **2×1**, **2×2**, **3×3**, **4×4** or **Spotlight** in the status bar.
+Fixed layouts mean columns × rows, fill the video area, and letterbox video
+inside black cells separated by 2 px gaps. Unused cells show **Empty** while
+active. When there are more cameras than slots, use
 **Previous / Next** or the **Left / Right arrow** keys to page (arrow shortcuts
 are inactive while typing or using Setup). Only the visible page keeps video
-connections open. The header reports that page's live count and the total
-number of cameras. Removing cameras clamps the page to the remaining range.
+connections open. Removing cameras clamps the page to the remaining range.
+
+**Spotlight** keeps one camera large on the left and up to four others in a
+vertical strip on the right. Select a strip tile with a click, Enter or Space to
+show it large; keyboard focus moves to its Fullscreen button. The selection is
+remembered in this browser when local storage is available, otherwise it lasts
+for the current visit. If the selected camera is removed, the first configured
+camera takes its place. Paging changes only the strip, and a single camera fills
+the whole video area.
+
+In Setup, **Spotlight rotation** can change the large camera every 10 seconds,
+30 seconds, minute or 5 minutes; it defaults to **Off** and is remembered on this
+display when local storage is available. Rotation chooses only Live cameras on
+the visible strip page and pauses while the tab is hidden, Setup is open, or any
+element is fullscreen. Manual selection restarts the interval; automatic changes
+leave the controls idle and keyboard focus unchanged.
+
+Hover over or focus a grid tile or the large Spotlight tile to reveal its
+**Snapshot** and **Fullscreen** icon buttons. Both buttons are keyboard accessible
+while active. Double-click the video area to toggle fullscreen. Strip tiles only
+select the large camera and have no Snapshot or Fullscreen controls.
 
 The selected layout is saved across restarts. If saving fails, the new layout
 stays on screen with **Layout not saved** and **Retry save**. Below 700 px the
@@ -145,7 +180,7 @@ The dashboard uses these same-origin endpoints.
 | POST | `/api/cameras` | JSON `{ "mac": "...", "name": "..." }`; name optional. Discover, probe, save and restart; returns 201. |
 | PATCH | `/api/cameras/camN` | JSON `{ "name": "..." }`; rename without restarting. |
 | DELETE | `/api/cameras/camN` | Remove and restart; returns 204. |
-| PUT | `/api/layout` | JSON `{ "layout": "2x2" }`; allowed: `auto`, `2x1`, `2x2`, `3x3`, `4x4`. |
+| PUT | `/api/layout` | JSON `{ "layout": "2x2" }`; allowed: `auto`, `2x1`, `2x2`, `3x3`, `4x4`, `spotlight`. |
 | GET | `/api/frame.jpeg?src=camN` | JPEG relay, capped at 10 MB. |
 | GET | `/api/ws?src=camN` | Same-origin WebSocket upgrade; transparent relay, at most 64 concurrent connections. |
 

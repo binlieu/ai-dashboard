@@ -4,27 +4,98 @@ const find = selector => document.querySelector(selector);
 const dashboard = find('.dashboard');
 const grid = find('#camera-grid');
 const clock = find('#clock');
+const date = find('#date');
 const summary = find('#summary');
+const statusBar = find('.status-bar');
 const setupDialog = find('#setup-dialog');
 const setupButton = find('#setup-button');
 const addForm = find('#add-camera-form');
 const macInput = find('#camera-mac');
 const nameInput = find('#camera-name');
+const rotationSelect = find('#rotation-interval');
+const rotationValues = ['0', '10', '30', '60', '300'];
 const layoutButtons = [...document.querySelectorAll('.layout-options button')];
 const mobile = matchMedia('(max-width: 699px)');
-const layouts = ['auto', '2x1', '2x2', '3x3', '4x4'];
+const layouts = ['auto', '2x1', '2x2', '3x3', '4x4', 'spotlight'];
 const tiles = new Map();
 const rows = new Map();
 const state = {
     cameras: [], max: 16, loaded: false, layout: 'auto', page: 0, pageCount: 1,
     visible: [], busy: false, videoChangePending: false, restartUntil: 0,
     cameraRevision: 0, layoutRevision: 0, layoutDirty: false,
+    spotlight: readSpotlight(), loadFailed: false,
+    rotationSeconds: readRotationInterval(),
 };
 let loadTimer = 0;
 let loadPromise = null;
 let restartTimer = 0;
 let layoutSaving = false;
 let queuedLayout = null;
+let activeUntil = performance.now() + 4000;
+let idleTimer = 0;
+let pointerOverBar = false;
+let lastPointer = null;
+let nextRotationAt = Date.now() + state.rotationSeconds * 1000;
+
+function readSpotlight() {
+    try { return localStorage.getItem('kcd.spotlight'); } catch { return null; }
+}
+
+function readRotationInterval() {
+    try {
+        const value = localStorage.getItem('kcd.rotate');
+        return rotationValues.includes(value) ? Number(value) : 0;
+    } catch { return 0; }
+}
+
+function resetRotation() {
+    nextRotationAt = Date.now() + state.rotationSeconds * 1000;
+}
+
+function changeRotationInterval() {
+    state.rotationSeconds = rotationValues.includes(rotationSelect.value) ? Number(rotationSelect.value) : 0;
+    rotationSelect.value = String(state.rotationSeconds);
+    try { localStorage.setItem('kcd.rotate', rotationSelect.value); } catch { /* Storage can be disabled. */ }
+    resetRotation();
+    announce(state.rotationSeconds ? `Rotation set to ${rotationSelect.selectedOptions[0].textContent}.` : 'Rotation off.');
+}
+
+function rotateSpotlight() {
+    if (!state.rotationSeconds || effectiveLayout() !== 'spotlight' || document.hidden ||
+        setupDialog.open || document.fullscreenElement || Date.now() < nextRotationAt) return;
+    const currentIndex = state.cameras.findIndex(camera => camera.id === state.spotlight);
+    for (let offset = 1; offset < state.cameras.length; offset++) {
+        const camera = state.cameras[(currentIndex + offset) % state.cameras.length];
+        if (state.visible.includes(camera.id) && tiles.get(camera.id)?.state === 'Live') {
+            selectSpotlight(camera.id, {automatic: true});
+            return;
+        }
+    }
+    resetRotation();
+}
+
+function updateActivity() {
+    clearTimeout(idleTimer);
+    const remaining = activeUntil - performance.now();
+    const heldActive = !state.cameras.length || state.loadFailed || setupDialog.open ||
+        pointerOverBar || statusBar.contains(document.activeElement);
+    dashboard.dataset.idle = String(!heldActive && remaining <= 0);
+    if (remaining > 0) idleTimer = setTimeout(updateActivity, remaining);
+}
+
+function activate() {
+    activeUntil = performance.now() + 4000;
+    updateActivity();
+}
+
+function selectSpotlight(id, {automatic = false} = {}) {
+    state.spotlight = id;
+    try { localStorage.setItem('kcd.spotlight', id); } catch { /* Storage can be disabled. */ }
+    resetRotation();
+    if (!automatic) activate();
+    renderPage();
+    if (!automatic) tiles.get(id).fullscreenButton.focus();
+}
 
 class ApiError extends Error {
     constructor(message, code = '', status = 0) {
@@ -73,10 +144,22 @@ function normalizeMac(value) {
     return text.replace(/-/g, ':').split(':').map(octet => octet.toLowerCase().padStart(2, '0')).join(':');
 }
 
+function addIcon(button, path) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    const shape = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    shape.setAttribute('d', path);
+    svg.appendChild(shape);
+    button.appendChild(svg);
+}
+
 class CameraTile {
     constructor(camera) {
         this.camera = camera;
         this.state = 'Paused';
+        this.offlineSince = null;
         this.visible = false;
         this.destroyed = false;
         this.player = null;
@@ -87,49 +170,74 @@ class CameraTile {
         this.objectURL = null;
         this.cleanupTimer = 0;
         this.card = find('#camera-template').content.firstElementChild.cloneNode(true);
-        this.tile = this.card.querySelector('.camera-tile');
-        this.status = this.card.querySelector('.status');
-        this.lastFrame = this.card.querySelector('.last-frame');
+        this.card.hidden = true;
+        this.tile = this.card;
+        this.label = this.card.querySelector('.tile-label-text');
+        this.dot = this.card.querySelector('.camera-dot');
+        this.controls = this.card.querySelector('.controls');
+        this.spotlightButton = this.card.querySelector('.spotlight-select');
         this.snapshotButton = this.card.querySelector('.snapshot');
         this.fullscreenButton = this.card.querySelector('.fullscreen');
         this.notice = this.card.querySelector('.notice');
+        addIcon(this.snapshotButton, 'M3 7h4l2-3h6l2 3h4v13H3Z M16 13a4 4 0 1 1-8 0 4 4 0 0 1 8 0');
+        addIcon(this.fullscreenButton, 'M3 9V3h6 M15 3h6v6 M21 15v6h-6 M9 21H3v-6');
         this.snapshotButton.addEventListener('click', () => this.snapshot());
         this.fullscreenButton.addEventListener('click', () => this.fullscreen());
+        this.spotlightButton.addEventListener('click', () => selectSpotlight(this.camera.id));
+        this.card.addEventListener('dblclick', event => {
+            if (!this.card.classList.contains('spotlight-strip') && !event.target.closest('button')) this.fullscreen();
+        });
         this.update(camera);
     }
 
     update(camera) {
         const wasAvailable = this.camera.available;
         this.camera = camera;
-        this.card.querySelector('.camera-name').textContent = camera.name;
-        this.card.querySelector('.tile-label').textContent = camera.name;
         this.tile.setAttribute('aria-label', `${camera.name} video`);
-        this.snapshotButton.setAttribute('aria-label', `Snapshot: ${camera.name}`);
+        this.snapshotButton.setAttribute('aria-label', `Snapshot of ${camera.name}`);
+        this.spotlightButton.setAttribute('aria-label', `Show ${camera.name} large`);
         this.updateFullscreenLabel();
-        this.card.querySelector('.unavailable-message').hidden = camera.available;
-        this.card.querySelector('.controls').hidden = !camera.available;
         if (!camera.available) {
             this.disconnectPlayer();
             this.showStatus('Unavailable');
         } else if (!wasAvailable && this.visible) {
             this.resetTracking();
         }
+        this.updateLabel();
     }
 
     showStatus(label) {
+        if (label === 'Live') this.offlineSince = null;
+        else if (this.state === 'Live') this.offlineSince = performance.now();
         this.state = label;
-        if (this.status.textContent !== label) {
-            this.status.textContent = label;
-            this.status.dataset.state = label.toLowerCase();
+        this.updateLabel();
+    }
+
+    updateLabel() {
+        const status = this.state.toLowerCase();
+        let suffix = status === 'live' ? '' : ` · ${status}`;
+        if (status === 'unavailable') suffix = ' · not found';
+        if (status === 'offline') {
+            const minutes = Math.floor((performance.now() - (this.offlineSince ?? performance.now())) / 60000);
+            suffix = ` · offline ${minutes < 1 ? '<1' : minutes} min`;
         }
-        this.lastFrame.hidden = label === 'Live' || label === 'Unavailable' || label === 'Paused';
+        const text = this.camera.name + suffix;
+        if (this.label.textContent !== text) this.label.textContent = text;
+        this.dot.dataset.state = status;
+        this.card.classList.toggle('is-offline', status === 'offline' || status === 'unavailable');
+    }
+
+    setRole(spotlight, strip) {
+        this.card.classList.toggle('spotlight-large', spotlight);
+        this.card.classList.toggle('spotlight-strip', strip);
+        this.controls.hidden = strip;
+        this.spotlightButton.hidden = !strip;
     }
 
     resetTracking() {
         this.watchStartedAt = performance.now();
         this.lastProgressAt = null;
         this.previousTime = this.player?.video?.currentTime ?? 0;
-        this.lastFrame.textContent = 'last frame: waiting';
         this.showStatus(this.camera.available ? 'Connecting' : 'Unavailable');
     }
 
@@ -187,12 +295,13 @@ class CameraTile {
             return;
         }
         this.visible = visible;
+        this.card.hidden = !visible;
         if (visible) {
+            if (this.offlineSince === null) this.offlineSince = performance.now();
             this.resetTracking();
             this.connectPlayer();
         } else {
             this.disconnectPlayer();
-            this.card.remove();
             this.showStatus(this.camera.available ? 'Paused' : 'Unavailable');
         }
     }
@@ -209,8 +318,6 @@ class CameraTile {
         else if (stalledFor >= 30000) this.showStatus('Offline');
         else if (stalledFor >= 5000) this.showStatus('Reconnecting');
         else this.showStatus('Connecting');
-        this.lastFrame.textContent = this.lastProgressAt === null
-            ? 'last frame: waiting' : `last frame: ${Math.floor(stalledFor / 1000)}s ago`;
         if (stalledFor > 30000 && !state.videoChangePending && now >= state.restartUntil &&
             this.player.ws?.readyState === WebSocket.OPEN && now - this.lastReconnectAt >= 30000) {
             this.lastReconnectAt = now;
@@ -273,8 +380,8 @@ class CameraTile {
 
     updateFullscreenLabel() {
         const active = document.fullscreenElement === this.tile;
-        this.fullscreenButton.textContent = active ? 'Exit fullscreen' : 'Fullscreen';
-        this.fullscreenButton.setAttribute('aria-label', `${active ? 'Exit fullscreen' : 'Fullscreen'}: ${this.camera.name}`);
+        this.fullscreenButton.setAttribute('aria-label', `${active ? 'Exit fullscreen for' : 'Fullscreen for'} ${this.camera.name}`);
+        this.fullscreenButton.setAttribute('aria-pressed', String(active));
     }
 
     async fullscreen() {
@@ -438,6 +545,7 @@ function reconcile(cameras) {
     cameras.forEach((camera, index) => {
         if (tiles.has(camera.id)) tiles.get(camera.id).update(camera);
         else tiles.set(camera.id, new CameraTile(camera));
+        placeNode(grid, tiles.get(camera.id).card, index);
         if (rows.has(camera.id)) rows.get(camera.id).update(camera);
         else rows.set(camera.id, new SetupRow(camera));
         placeNode(find('#setup-camera-list'), rows.get(camera.id).node, index);
@@ -452,21 +560,25 @@ function effectiveLayout() {
 
 function renderPage() {
     const layout = effectiveLayout();
-    const slots = layout === 'auto' ? Math.max(1, state.cameras.length)
+    const spotlight = layout === 'spotlight';
+    if (spotlight && grid.dataset.layout !== 'spotlight') resetRotation();
+    if (!state.cameras.some(camera => camera.id === state.spotlight)) state.spotlight = state.cameras[0]?.id ?? null;
+    const others = spotlight ? state.cameras.filter(camera => camera.id !== state.spotlight) : state.cameras;
+    const slots = spotlight ? 4 : layout === 'auto' ? Math.max(1, state.cameras.length)
         : Number(layout.split('x')[0]) * Number(layout.split('x')[1]);
-    state.pageCount = Math.max(1, Math.ceil(state.cameras.length / slots));
+    state.pageCount = Math.max(1, Math.ceil(others.length / slots));
     state.page = Math.max(0, Math.min(state.page, state.pageCount - 1));
-    const visible = state.cameras.slice(state.page * slots, (state.page + 1) * slots);
+    const visible = others.slice(state.page * slots, (state.page + 1) * slots);
+    if (spotlight && state.cameras.length) visible.unshift(state.cameras.find(camera => camera.id === state.spotlight));
     state.visible = visible.map(camera => camera.id);
     const visibleIds = new Set(state.visible);
-    for (const [id, tile] of tiles) if (!visibleIds.has(id)) tile.setVisible(false);
+    for (const [id, tile] of tiles) {
+        tile.setRole(spotlight && id === state.spotlight, spotlight && id !== state.spotlight);
+        if (!visibleIds.has(id)) tile.setVisible(false);
+    }
     for (const placeholder of grid.querySelectorAll('.empty-slot')) placeholder.remove();
-    visible.forEach((camera, index) => {
-        const tile = tiles.get(camera.id);
-        placeNode(grid, tile.card, index);
-        tile.setVisible(true);
-    });
-    if (layout !== 'auto' && state.cameras.length) {
+    visible.forEach(camera => tiles.get(camera.id).setVisible(true));
+    if (layout !== 'auto' && !spotlight && state.cameras.length) {
         for (let index = visible.length; index < slots; index++) {
             const placeholder = document.createElement('div');
             placeholder.className = 'empty-slot';
@@ -475,10 +587,10 @@ function renderPage() {
         }
     }
     grid.dataset.layout = layout;
+    grid.classList.toggle('spotlight-single', spotlight && state.cameras.length === 1);
     grid.dataset.auto = state.cameras.length === 1 ? 'single' : state.cameras.length === 2 ? 'pair'
         : state.cameras.length <= 4 ? 'quad' : 'many';
     dashboard.dataset.effectiveLayout = layout;
-    dashboard.classList.toggle('many-cameras', layout === 'auto' && state.cameras.length > 4);
     grid.hidden = !state.cameras.length;
     find('#empty-state').hidden = Boolean(state.cameras.length);
     if (state.loaded && !state.cameras.length) {
@@ -491,13 +603,30 @@ function renderPage() {
     find('#next-page').disabled = state.page >= state.pageCount - 1;
     layoutButtons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.layout === state.layout)));
     updateSummary();
+    updateActivity();
 }
 
 function updateSummary() {
-    const live = state.visible.filter(id => tiles.get(id)?.state === 'Live').length;
-    const total = state.cameras.length;
-    const text = `${live} of ${state.visible.length} live · ${total} ${total === 1 ? 'camera' : 'cameras'}`;
-    if (summary.textContent !== text) summary.textContent = text;
+    const counts = {live: 0, offline: 0, connecting: 0};
+    state.visible.forEach(id => {
+        const status = tiles.get(id)?.state;
+        if (status === 'Live') counts.live++;
+        else if (status === 'Offline' || status === 'Unavailable') counts.offline++;
+        else if (status === 'Connecting' || status === 'Reconnecting') counts.connecting++;
+    });
+    const groups = Object.entries(counts).filter(([status, count]) => status === 'live' || count > 0);
+    const text = groups.map(([status, count]) => `● ${count} ${status}`).join(' ');
+    if (summary.textContent !== text) {
+        const nodes = [];
+        groups.forEach(([status, count], index) => {
+            if (index) nodes.push(document.createTextNode(' '));
+            const span = document.createElement('span');
+            span.className = `health-${status}`;
+            span.textContent = `● ${count} ${status}`;
+            nodes.push(span);
+        });
+        summary.replaceChildren(...nodes);
+    }
     rows.forEach(row => row.updateStatus());
     if (state.restartUntil && !state.videoChangePending && state.visible.length &&
         state.visible.every(id => tiles.get(id).state === 'Live')) endRestart();
@@ -564,6 +693,7 @@ function loadCameras() {
                 return false;
             }
             state.loaded = true;
+            state.loadFailed = false;
             state.max = data.max;
             if (layoutRevision === state.layoutRevision && !state.layoutDirty && !layoutSaving) state.layout = data.layout;
             reconcile(data.cameras);
@@ -572,6 +702,8 @@ function loadCameras() {
             scheduleLoad(30000);
             return true;
         } catch (error) {
+            state.loadFailed = true;
+            updateActivity();
             find('#connection-message').textContent = error.message;
             find('#connection-message').hidden = false;
             find('#retry-cameras').hidden = false;
@@ -667,6 +799,7 @@ async function saveLayouts() {
 function openSetup() {
     if (setupDialog.open) return;
     setupDialog.showModal();
+    activate();
     (find('#add-fields').disabled ? find('#close-setup') : macInput).focus();
 }
 
@@ -678,7 +811,13 @@ function changePage(delta) {
 setupButton.addEventListener('click', openSetup);
 find('#empty-setup').addEventListener('click', openSetup);
 find('#close-setup').addEventListener('click', () => setupDialog.close());
-setupDialog.addEventListener('close', () => setupButton.focus());
+setupDialog.addEventListener('close', () => {
+    resetRotation();
+    activate();
+    setupButton.focus();
+});
+rotationSelect.value = String(state.rotationSeconds);
+rotationSelect.addEventListener('change', changeRotationInterval);
 addForm.addEventListener('submit', addCamera);
 macInput.addEventListener('input', () => {
     find('#mac-error').textContent = '';
@@ -694,9 +833,21 @@ find('#retry-layout').addEventListener('click', () => {
 });
 layoutButtons.forEach(button => button.addEventListener('click', () => selectLayout(button.dataset.layout)));
 mobile.addEventListener('change', renderPage);
+for (const event of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
+    document.addEventListener(event, activate, {capture: true, passive: true});
+}
+document.addEventListener('pointermove', event => {
+    const moved = lastPointer && (lastPointer.x !== event.clientX || lastPointer.y !== event.clientY);
+    lastPointer = {x: event.clientX, y: event.clientY};
+    if (moved) activate();
+}, {passive: true});
+statusBar.addEventListener('pointerenter', () => { pointerOverBar = true; updateActivity(); });
+statusBar.addEventListener('pointerleave', () => { pointerOverBar = false; updateActivity(); });
+statusBar.addEventListener('focusin', updateActivity);
+statusBar.addEventListener('focusout', () => queueMicrotask(updateActivity));
 document.addEventListener('keydown', event => {
     if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || setupDialog.open ||
-        event.target.closest('input, textarea, select, [contenteditable]')) return;
+        (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]'))) return;
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
         if (state.pageCount <= 1) return;
         event.preventDefault();
@@ -704,6 +855,7 @@ document.addEventListener('keydown', event => {
     }
 });
 document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) resetRotation();
     tiles.forEach(tile => tile.visibilityChanged());
     updateSummary();
 });
@@ -712,7 +864,9 @@ document.addEventListener('fullscreenchange', () => tiles.forEach(tile => tile.u
 function updateClock() {
     const now = new Date();
     clock.dateTime = now.toISOString();
-    clock.textContent = now.toLocaleTimeString([], {hour12: false});
+    clock.textContent = now.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hourCycle: 'h23'});
+    date.dateTime = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    date.textContent = now.toLocaleDateString([], {weekday: 'short', day: 'numeric', month: 'short'});
 }
 
 // Unattended wall displays: reload once a day, between 04:00 and 05:00 local time.
@@ -734,10 +888,12 @@ function dailyReload() {
 }
 
 updateClock();
+updateActivity();
 loadCameras();
 setInterval(() => {
     updateClock();
     dailyReload();
     tiles.forEach(tile => tile.updatePlaybackStatus());
+    rotateSpotlight();
     updateSummary();
 }, 1000);

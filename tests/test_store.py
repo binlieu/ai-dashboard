@@ -87,7 +87,7 @@ class StoreTests(unittest.TestCase):
 
     def test_layouts(self):
         store = CameraStore(self.path)
-        for layout in ('auto', '2x1', '2x2', '3x3', '4x4'):
+        for layout in ('auto', '2x1', '2x2', '3x3', '4x4', 'spotlight'):
             store.set_layout(layout)
             self.assertEqual(CameraStore(self.path).snapshot()['layout'], layout)
         with self.assertRaises(StoreError):

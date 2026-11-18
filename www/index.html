@@ -11,33 +11,6 @@
 </head>
 <body>
     <main class="dashboard">
-        <header class="dashboard-header">
-            <div class="header-main">
-                <h1>Camera</h1>
-                <span id="summary" class="summary" role="status">Loading cameras…</span>
-                <time id="clock" class="clock" aria-label="Local time"></time>
-                <button id="setup-button" type="button" aria-haspopup="dialog" aria-controls="setup-dialog">Setup</button>
-            </div>
-            <div class="header-tools">
-                <div class="layout-options" role="group" aria-label="Grid layout">
-                    <button type="button" data-layout="auto" aria-pressed="true">Auto</button>
-                    <button type="button" data-layout="2x1" aria-pressed="false">2×1</button>
-                    <button type="button" data-layout="2x2" aria-pressed="false">2×2</button>
-                    <button type="button" data-layout="3x3" aria-pressed="false">3×3</button>
-                    <button type="button" data-layout="4x4" aria-pressed="false">4×4</button>
-                </div>
-                <span id="layout-message" class="small-message" role="status"></span>
-                <button id="retry-layout" class="compact-button" type="button" hidden>Retry save</button>
-                <nav id="pagination" class="pagination" aria-label="Camera pages" hidden>
-                    <button id="previous-page" class="compact-button" type="button">Previous</button>
-                    <span id="page-label" role="status">Page 1 of 1</span>
-                    <button id="next-page" class="compact-button" type="button">Next</button>
-                </nav>
-            </div>
-            <p id="restart-banner" class="restart-banner" role="status" hidden>Restarting video…</p>
-            <p id="connection-message" class="connection-message" role="status" hidden></p>
-        </header>
-
         <div class="dashboard-content">
             <section id="camera-grid" class="camera-grid" aria-label="Cameras" hidden></section>
             <section id="empty-state" class="empty-state">
@@ -47,6 +20,33 @@
                 <button id="retry-cameras" type="button" hidden>Retry connection</button>
             </section>
         </div>
+        <footer class="status-bar" aria-label="Dashboard status and controls">
+            <div class="status-information">
+                <time id="clock" class="clock" aria-label="Local time"></time>
+                <time id="date" class="date"></time>
+                <span id="summary" class="summary" role="status">Loading cameras…</span>
+                <span id="restart-banner" class="restart-banner" role="status" hidden>Restarting video…</span>
+                <span id="connection-message" class="connection-message" role="status" hidden></span>
+                <span id="layout-message" class="small-message" role="status"></span>
+                <button id="retry-layout" class="compact-button" type="button" hidden>Retry save</button>
+            </div>
+            <div class="status-controls">
+                <nav id="pagination" class="pagination" aria-label="Camera pages" hidden>
+                    <button id="previous-page" class="compact-button" type="button">Previous</button>
+                    <span id="page-label" role="status">Page 1 of 1</span>
+                    <button id="next-page" class="compact-button" type="button">Next</button>
+                </nav>
+                <div class="layout-options" role="group" aria-label="Grid layout">
+                    <button type="button" data-layout="auto" aria-pressed="true">Auto</button>
+                    <button type="button" data-layout="2x1" aria-pressed="false">2×1</button>
+                    <button type="button" data-layout="2x2" aria-pressed="false">2×2</button>
+                    <button type="button" data-layout="3x3" aria-pressed="false">3×3</button>
+                    <button type="button" data-layout="4x4" aria-pressed="false">4×4</button>
+                    <button type="button" data-layout="spotlight" aria-pressed="false">Spotlight</button>
+                </div>
+                <button id="setup-button" type="button" aria-haspopup="dialog" aria-controls="setup-dialog">Setup</button>
+            </div>
+        </footer>
         <noscript>Enable JavaScript to view the camera.</noscript>
     </main>
 
@@ -83,6 +83,18 @@
                     <div id="setup-camera-list" class="setup-camera-list"></div>
                 </fieldset>
             </section>
+            <section aria-labelledby="rotation-title">
+                <h3 id="rotation-title">Spotlight rotation</h3>
+                <label for="rotation-interval">Change the large camera</label>
+                <select id="rotation-interval" aria-describedby="rotation-help">
+                    <option value="0" selected>Off</option>
+                    <option value="10">Every 10 seconds</option>
+                    <option value="30">Every 30 seconds</option>
+                    <option value="60">Every minute</option>
+                    <option value="300">Every 5 minutes</option>
+                </select>
+                <p id="rotation-help" class="field-help">Applies to the Spotlight layout on this display.</p>
+            </section>
         </div>
     </dialog>
 
@@ -116,26 +128,18 @@
     </template>
 
     <template id="camera-template">
-        <article class="camera-card">
-            <header class="camera-header">
-                <h2 class="camera-name"></h2>
-                <div class="connection">
-                    <span class="status" data-state="connecting" role="status">Connecting</span>
-                    <span class="last-frame">last frame: waiting</span>
-                </div>
-            </header>
-            <section class="camera-tile">
-                <div class="player-container"></div>
-                <span class="tile-label" aria-hidden="true"></span>
-                <p class="unavailable-message" hidden>Not found on the network</p>
-            </section>
-            <footer class="camera-footer">
-                <div class="controls">
-                    <button class="snapshot" type="button">Snapshot</button>
-                    <button class="fullscreen" type="button">Fullscreen</button>
-                </div>
-                <p class="notice" role="status"></p>
-            </footer>
+        <article class="camera-card camera-tile">
+            <div class="player-container"></div>
+            <span class="tile-label">
+                <span class="camera-dot" aria-hidden="true"></span>
+                <span class="tile-label-text"></span>
+            </span>
+            <div class="controls">
+                <button class="snapshot" type="button"></button>
+                <button class="fullscreen" type="button"></button>
+            </div>
+            <button class="spotlight-select" type="button" hidden></button>
+            <p class="notice" role="status"></p>
         </article>
     </template>
 </body>
