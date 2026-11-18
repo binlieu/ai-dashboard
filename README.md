@@ -141,6 +141,12 @@ active. When there are more cameras than slots, use
 are inactive while typing or using Setup). Only the visible page keeps video
 connections open. Removing cameras clamps the page to the remaining range.
 
+**Portrait displays:** monitors at least 700 px wide automatically use fewer columns
+and more rows when mounted vertically. Spotlight places the large camera above a
+2×2 strip; the info tile stays in the last cell. Layout names and saved choices stay
+the same. Controls wrap below the status information when needed and leave the bar
+when idle. Narrower screens keep the existing Auto fallback.
+
 **Spotlight** keeps one camera large on the left and up to four others in a
 vertical strip on the right. Select a strip tile with a click, Enter or Space to
 show it large; keyboard focus moves to its Fullscreen button. The selection is

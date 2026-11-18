@@ -20,8 +20,8 @@
     --info-surface: var(--surface);
     --bar-surface: var(--surface);
     --mono-font: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-    --bar-font: clamp(12px, 1.12vh, 24px);
-    --bar-control: clamp(32px, 2.96vh, 64px);
+    --bar-font: clamp(12px, 1.12vmin, 24px);
+    --bar-control: clamp(32px, 2.96vmin, 64px);
     background: var(--page);
     color: var(--text);
 }
@@ -126,7 +126,7 @@ fieldset:disabled input {
     flex-wrap: wrap;
     align-items: center;
     gap: 4px clamp(12px, 1.1vw, 24px);
-    min-height: clamp(40px, 3.704vh, 80px);
+    min-height: clamp(40px, 3.704vmin, 80px);
     padding: 4px clamp(8px, 0.75vw, 24px);
     background: var(--bar-surface);
     font-size: var(--bar-font);
@@ -159,7 +159,7 @@ fieldset:disabled input {
 }
 
 .clock {
-    font-size: clamp(20px, 1.85vh, 40px);
+    font-size: clamp(20px, 1.85vmin, 40px);
     font-weight: 600;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
@@ -222,44 +222,13 @@ fieldset:disabled input {
     min-height: 0;
     min-width: 0;
     background: var(--page);
-}
-
-.camera-grid[data-layout="auto"][data-auto="single"] {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr);
-}
-
-.camera-grid[data-layout="auto"][data-auto="pair"],
-.camera-grid[data-layout="2x1"] {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-rows: minmax(0, 1fr);
-}
-
-.camera-grid[data-layout="auto"][data-auto="quad"],
-.camera-grid[data-layout="2x2"] {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-rows: repeat(2, minmax(0, 1fr));
-}
-
-.camera-grid[data-layout="auto"][data-auto="six"] {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    grid-template-rows: repeat(2, minmax(0, 1fr));
-}
-
-.camera-grid[data-layout="auto"][data-auto="nine"],
-.camera-grid[data-layout="3x3"] {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    grid-template-rows: repeat(3, minmax(0, 1fr));
-}
-
-.camera-grid[data-layout="4x4"] {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    grid-template-rows: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(var(--grid-columns, 1), minmax(0, 1fr));
+    grid-template-rows: repeat(var(--grid-rows, 1), minmax(0, 1fr));
 }
 
 .camera-grid[data-layout="spotlight"] {
     grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
-    grid-template-rows: repeat(4, minmax(0, 1fr));
+    grid-template-rows: repeat(var(--grid-rows), minmax(0, 1fr));
 }
 
 .spotlight-large {
@@ -275,13 +244,14 @@ fieldset:disabled input {
     grid-template-columns: minmax(0, 1fr);
 }
 
-.camera-grid[data-layout="auto"][data-auto="many"] {
+.camera-grid[data-layout="auto"][data-scrolling="true"] {
     align-self: start;
     height: auto;
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    grid-template-rows: none;
 }
 
-.camera-grid[data-layout="auto"][data-auto="many"] .camera-card {
+.camera-grid[data-layout="auto"][data-scrolling="true"] .camera-card {
     aspect-ratio: 16 / 9;
 }
 
@@ -328,17 +298,17 @@ video-stream .info {
 .tile-label {
     position: absolute;
     z-index: 1;
-    bottom: clamp(8px, 0.75vh, 16px);
+    bottom: clamp(8px, 0.75vmin, 16px);
     left: clamp(8px, 0.75vw, 20px);
     display: flex;
     align-items: center;
     gap: 7px;
-    max-width: calc(100% - clamp(112px, 11vh, 240px));
+    max-width: calc(100% - clamp(112px, 11vmin, 240px));
     padding: 5px 8px;
     border-radius: 3px;
     background: var(--scrim);
     color: var(--text);
-    font-size: clamp(14px, 1.9vh, 40px);
+    font-size: clamp(14px, 1.9vmin, 40px);
     line-height: 1.4;
     pointer-events: none;
 }
@@ -352,8 +322,8 @@ video-stream .info {
 
 .camera-dot {
     flex: none;
-    width: clamp(7px, 0.65vh, 14px);
-    height: clamp(7px, 0.65vh, 14px);
+    width: clamp(7px, 0.65vmin, 14px);
+    height: clamp(7px, 0.65vmin, 14px);
     border-radius: 50%;
     background: var(--muted);
 }
@@ -373,7 +343,7 @@ video-stream .info {
 .controls {
     position: absolute;
     z-index: 2;
-    bottom: clamp(8px, 0.75vh, 16px);
+    bottom: clamp(8px, 0.75vmin, 16px);
     right: clamp(8px, 0.75vw, 20px);
     display: flex;
     gap: 4px;
@@ -384,8 +354,8 @@ video-stream .info {
 .controls button {
     display: grid;
     place-items: center;
-    width: clamp(40px, 3.7vh, 80px);
-    height: clamp(40px, 3.7vh, 80px);
+    width: clamp(40px, 3.7vmin, 80px);
+    height: clamp(40px, 3.7vmin, 80px);
     padding: 8px;
     border: 0;
     background: var(--scrim);
@@ -440,7 +410,7 @@ video-stream .info {
     padding: 6px 8px;
     background: var(--scrim);
     color: var(--connecting);
-    font-size: clamp(12px, 1.2vh, 26px);
+    font-size: clamp(12px, 1.2vmin, 26px);
 }
 
 .notice:empty, .field-error:empty, .setup-announcement:empty {
@@ -459,7 +429,7 @@ video-stream .info {
     min-width: 0;
     background: var(--video);
     color: var(--muted);
-    font-size: clamp(12px, 1.2vh, 26px);
+    font-size: clamp(12px, 1.2vmin, 26px);
 }
 
 .empty-state {
@@ -823,7 +793,7 @@ video-stream .info {
     color: var(--accent);
 }
 
-.camera-grid[data-layout="auto"][data-auto="many"] .info-tile {
+.camera-grid[data-layout="auto"][data-scrolling="true"] .info-tile {
     aspect-ratio: 16 / 9;
 }
 
@@ -847,6 +817,160 @@ video-stream .info {
     display: flex;
     align-items: center;
     gap: 1.5cqw;
+}
+
+/* Mounted portrait monitors keep the narrow-screen fallback below 700px. */
+@media (orientation: portrait) and (min-width: 700px) {
+    .dashboard {
+        --bar-font: clamp(12px, 1.12vw, 24px);
+        --bar-control: clamp(32px, 2.96vw, 64px);
+    }
+
+    .dashboard .status-bar {
+        min-height: clamp(40px, 3.704vw, 80px);
+    }
+
+    .dashboard .clock { font-size: clamp(20px, 1.85vw, 40px); }
+
+    .dashboard .status-information { flex-wrap: nowrap; }
+
+    .dashboard .status-information > .clock,
+    .dashboard .status-information > .date,
+    .dashboard .summary { flex: none; }
+
+    .dashboard .summary { white-space: nowrap; }
+
+    .dashboard .restart-banner,
+    .dashboard .connection-message,
+    .dashboard #layout-message {
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+
+    .dashboard .status-controls { min-width: 0; }
+
+    .dashboard .layout-options {
+        max-width: 100%;
+        flex-wrap: wrap;
+    }
+
+    .dashboard[data-idle="true"] .status-controls { display: none; }
+
+    /* Override the 899px Auto rules only for portrait grids that fit on screen. */
+    .dashboard .camera-grid[data-layout="auto"][data-scrolling="false"] {
+        align-self: stretch;
+        height: 100%;
+        grid-template-columns: repeat(var(--grid-columns), minmax(0, 1fr));
+        grid-template-rows: repeat(var(--grid-rows), minmax(0, 1fr));
+    }
+
+    .dashboard .camera-grid[data-layout="auto"][data-scrolling="false"] .camera-card,
+    .dashboard .camera-grid[data-layout="auto"][data-scrolling="false"] .info-tile {
+        aspect-ratio: auto;
+    }
+
+    .dashboard .camera-grid[data-layout="spotlight"] {
+        grid-template-columns: repeat(var(--grid-columns), minmax(0, 1fr));
+        grid-template-rows: minmax(0, 2fr) repeat(calc(var(--grid-rows) - 1), minmax(0, 1.5fr));
+    }
+
+    .dashboard .spotlight-large {
+        grid-column: 1 / -1;
+        grid-row: 1;
+    }
+
+    .dashboard .spotlight-strip { grid-column: auto; }
+
+    .dashboard .camera-grid[data-layout="spotlight"].spotlight-single {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr);
+    }
+
+    .info-clock { font-size: clamp(32px, min(20cqh, 18cqw), 180px); }
+
+    .info-date { font-size: clamp(12px, min(5.8cqh, 4.8cqw), 40px); }
+
+    .info-current {
+        flex-wrap: wrap;
+        font-size: clamp(14px, min(5.8cqh, 4cqw), 40px);
+    }
+
+    .info-temperature { font-size: clamp(24px, min(12cqh, 8cqw), 80px); }
+
+    .info-details { font-size: clamp(12px, min(5.2cqh, 3.2cqw), 36px); }
+
+    .forecast-day {
+        font-size: clamp(12px, min(3.6cqh, 2.6cqw), 32px);
+    }
+
+    @container info (max-height: 800px) {
+        .info-place { display: none; }
+    }
+
+    @container info (max-width: 900px) {
+        .info-place,
+        .forecast-day:nth-child(n+5) { display: none; }
+    }
+}
+
+/* A wide, short cell uses its width for two columns, regardless of orientation. */
+@container info (min-aspect-ratio: 2.2) {
+    .info-content {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+        column-gap: 4cqw;
+    }
+
+    .info-clock {
+        grid-column: 1;
+        grid-row: 1;
+        align-self: end;
+        font-size: clamp(32px, 8cqw, 180px);
+    }
+
+    .info-date {
+        grid-column: 1;
+        grid-row: 2;
+        align-self: start;
+    }
+
+    .info-weather, .info-message {
+        grid-column: 2;
+        grid-row: 1 / -1;
+        align-self: center;
+        min-width: 0;
+        margin: 0;
+    }
+
+    .info-current { flex-wrap: wrap; gap: 1cqh 1cqw; }
+
+    .info-details { overflow-wrap: anywhere; }
+
+    .info-forecast { gap: 1cqw; }
+
+    .forecast-day { font-size: clamp(12px, 1.3cqw, 20px); }
+}
+
+@container info (min-aspect-ratio: 2.2) and (max-height: 300px) {
+    .info-place { display: none; }
+}
+
+@container info (min-aspect-ratio: 2.2) and (max-width: 900px) {
+    .forecast-day:nth-child(n+4) { display: none; }
+}
+
+@container info (min-aspect-ratio: 2.2) and (max-width: 1200px) {
+    .info-place,
+    .forecast-day:nth-child(n+5) { display: none; }
+}
+
+@container info (min-aspect-ratio: 2.2) and (max-width: 600px) {
+    .forecast-day:nth-child(n+3) { display: none; }
+}
+
+@container info (min-aspect-ratio: 2.2) and (max-height: 190px) {
+    .info-forecast { display: none; }
 }
 
 /* Mission control — ground-control telemetry. */
@@ -1017,9 +1141,9 @@ video-stream .info {
 :root[data-theme="hud"] .tile-label {
     left: max(16px, min(3cqw, 3cqh));
     bottom: max(16px, min(3cqw, 3cqh));
-    max-width: calc(100% - clamp(128px, 13vh, 280px));
+    max-width: calc(100% - clamp(128px, 13vmin, 280px));
     border-radius: 0;
-    font-size: clamp(16px, 2.1vh, 44px);
+    font-size: clamp(16px, 2.1vmin, 44px);
     font-weight: 400;
     letter-spacing: 0.12em;
     text-transform: uppercase;
