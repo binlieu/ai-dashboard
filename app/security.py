@@ -56,6 +56,8 @@ def _check_request(method, target, headers, port):
             methods = ("GET", "POST")
         elif path == "/api/layout":
             methods = ("PUT",)
+        elif path == "/api/weather":
+            methods = ("GET", "PUT")
         elif path.startswith("/api/cameras/") and CAMERA_ID.fullmatch(path[len("/api/cameras/"):]):
             methods = ("PATCH", "DELETE")
         else:

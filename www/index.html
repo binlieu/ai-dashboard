@@ -12,7 +12,24 @@
 <body>
     <main class="dashboard">
         <div class="dashboard-content">
-            <section id="camera-grid" class="camera-grid" aria-label="Cameras" hidden></section>
+            <section id="camera-grid" class="camera-grid" aria-label="Cameras" hidden>
+                <article id="info-tile" class="info-tile" aria-label="Clock and weather" hidden>
+                    <div class="info-content">
+                        <time id="info-clock" class="info-clock" aria-label="Local time"></time>
+                        <time id="info-date" class="info-date"></time>
+                        <p id="info-message" class="info-message">Loading weather…</p>
+                        <div id="info-weather" class="info-weather" hidden>
+                            <div class="info-current">
+                                <span id="info-temperature" class="info-temperature"></span>
+                                <span id="info-condition"></span>
+                            </div>
+                            <p id="info-details" class="info-details"></p>
+                            <p id="info-place" class="info-place"></p>
+                            <div id="info-forecast" class="info-forecast" aria-label="Five-day forecast"></div>
+                        </div>
+                    </div>
+                </article>
+            </section>
             <section id="empty-state" class="empty-state">
                 <h2 id="empty-title">Loading cameras…</h2>
                 <p id="empty-description">Your cameras will appear here.</p>
@@ -94,6 +111,27 @@
                     <option value="300">Every 5 minutes</option>
                 </select>
                 <p id="rotation-help" class="field-help">Applies to the Spotlight layout on this display.</p>
+            </section>
+            <section aria-labelledby="weather-title">
+                <h3 id="weather-title">Clock and weather</h3>
+                <form id="weather-form" novalidate>
+                    <fieldset id="weather-fields" disabled>
+                        <label class="checkbox-label" for="weather-enabled">
+                            <input id="weather-enabled" type="checkbox"> Show the info tile
+                        </label>
+                        <label for="weather-place">ZIP code or city</label>
+                        <input id="weather-place" maxlength="80" placeholder="90210 or Chicago" autocomplete="off" aria-describedby="weather-error">
+                        <label for="weather-units">Units</label>
+                        <select id="weather-units">
+                            <option value="f">°F, mph</option>
+                            <option value="c">°C, km/h</option>
+                        </select>
+                        <button class="primary-button" type="submit">Save</button>
+                    </fieldset>
+                </form>
+                <p id="weather-progress" class="small-message" role="status"></p>
+                <p id="weather-result" class="setup-announcement" role="status"></p>
+                <p id="weather-error" class="field-error" role="alert"></p>
             </section>
         </div>
     </dialog>

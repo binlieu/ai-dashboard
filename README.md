@@ -64,10 +64,11 @@ Other programs running as your macOS user can still access local services.
 Generated files:
 
 - `data/cameras.json`: versioned camera IDs, names, canonical MAC addresses,
-  next-ID counter and layout. The directory has mode `700`, file mode `600`.
+  next-ID counter, layout and optional weather settings. The directory has mode `700`, file mode `600`.
   Writes use a same-directory temporary file and atomic replacement. IDs are
   never reused, including after removal. A corrupt file is renamed to a private
   `cameras.json.corrupt-<timestamp>` backup; startup warns and uses an empty list.
+  Invalid weather settings alone reset weather and warn while preserving cameras.
 - `run/go2rtc.yaml`: Unix-socket-only configuration, mode `600` in a mode `700`
   directory. Its login placeholders stay literal; real login values reach
   go2rtc only through its environment. Config is rebuilt before every child
@@ -151,6 +152,35 @@ the visible strip page and pauses while the tab is hidden, Setup is open, or any
 element is fullscreen. Manual selection restarts the interval; automatic changes
 leave the controls idle and keyboard focus unchanged.
 
+In Setup, **Clock and weather** adds an optional info tile. Check **Show the info
+tile**, enter a US **ZIP code or city** (for example `90210` or `Springfield`),
+choose **°F, mph** or **°C, km/h**, and select **Save**. The resolved place name is
+shown after saving so you can confirm the match. Failed saves preserve your input.
+The tile shows a large local clock and date, current conditions, feels-like
+temperature, wind, and up to five forecast days with rain chances of at least 20%.
+Small tiles hide forecast days that do not fit. The clock continues to work while
+weather loads or is unavailable.
+
+The info tile uses the last cell on every fixed-layout page, leaving one fewer
+camera slot. In Spotlight it occupies the fourth strip row, leaving three strip
+camera slots; one camera stays large with the info tile alone in the strip. In
+Auto it follows the cameras. An empty dashboard keeps its existing empty state.
+Weather saves do not restart the video bridge. Forecasts refresh every 15 minutes
+(retrying after two minutes on failure); the last good forecast remains available
+for up to three hours. The browser checks the local cache every five minutes and
+briefly polls while the initial forecast loads.
+
+**Weather privacy:** the place you type and its coordinates rounded to two
+decimals (about 1 km) are sent from this computer to Open-Meteo
+(`open-meteo.com`) to look up the forecast. Nothing else is sent, and the browser
+itself makes no external requests. Requests use a fixed application User-Agent;
+the weather provider also sees the connection's public IP address. Disabling the
+tile stops further weather requests; saving a different place while disabled
+stores it locally for lookup when enabled.
+
+Weather data by Open-Meteo.com (CC BY 4.0). Open-Meteo's free service is for
+non-commercial use.
+
 Hover over or focus a grid tile or the large Spotlight tile to reveal its
 **Snapshot** and **Fullscreen** icon buttons. Both buttons are keyboard accessible
 while active. Double-click the video area to toggle fullscreen. Strip tiles only
@@ -181,10 +211,15 @@ The dashboard uses these same-origin endpoints.
 | PATCH | `/api/cameras/camN` | JSON `{ "name": "..." }`; rename without restarting. |
 | DELETE | `/api/cameras/camN` | Remove and restart; returns 204. |
 | PUT | `/api/layout` | JSON `{ "layout": "2x2" }`; allowed: `auto`, `2x1`, `2x2`, `3x3`, `4x4`, `spotlight`. |
+| GET | `/api/weather` | Settings and cached forecast with status `off`, `loading`, `ok` or `unavailable`; never exposes coordinates. |
+| PUT | `/api/weather` | JSON `{ "enabled": true, "place": "Springfield", "units": "f" }`; units `f` or `c`. Resolves enabled places and returns the same shape as GET. |
 | GET | `/api/frame.jpeg?src=camN` | JPEG relay, capped at 10 MB. |
 | GET | `/api/ws?src=camN` | Same-origin WebSocket upgrade; transparent relay, at most 64 concurrent connections. |
 
-Mutations are serialized across discovery, probing, storage and bridge changes.
+Camera mutations are serialized across discovery, probing, storage and bridge changes.
+Weather requests run independently of that lock; geocoding may take about ten
+seconds. Weather validation errors return 400, `place_not_found` returns 404,
+and `weather_unavailable` returns 502. Forecast reads never wait on the network.
 POST reports `invalid_mac` (400), `duplicate`/`limit` (409), `not_found` (404),
 `auth`/`not_kasa` (422), or `go2rtc` (502). If applying a stream change fails,
 the store is restored and the previous bridge configuration is applied again.

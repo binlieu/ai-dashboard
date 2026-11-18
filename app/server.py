@@ -17,6 +17,7 @@ from .discovery import ip_for_mac, sweep_local_network, valid_ip
 from .go2rtc import MAX_FRAME, probe_camera
 from .security import check_request
 from .store import MAX_CAMERAS, StoreError
+from .weather import WeatherError, WeatherService
 
 CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                  ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8",
@@ -25,8 +26,9 @@ CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; c
 
 class DashboardApplication:
     def __init__(self, store, bridge, user, password_b64, lookup=ip_for_mac,
-                 sweep=sweep_local_network, probe=probe_camera, initial_cameras=None):
+                 sweep=sweep_local_network, probe=probe_camera, initial_cameras=None, weather=None):
         self.store, self.bridge = store, bridge
+        self.weather = weather if weather is not None else WeatherService(store)
         self._user, self._password_b64 = user, password_b64
         self.lookup, self.sweep, self.probe = lookup, sweep, probe
         self.lock = threading.RLock()
@@ -267,6 +269,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         try:
             self._route(urlsplit(self.path).path, headers)
+        except WeatherError as error:
+            status = {"place_not_found": 404, "weather_unavailable": 502}.get(error.code, 400)
+            self._json(status, {"error": error.code, "message": error.message})
         except StoreError as error:
             self._json(error.status, {"error": error.code, "message": error.message})
         except (OSError, http.client.HTTPException, RuntimeError, ValueError, TypeError):
@@ -281,6 +286,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._json(201, application.add(self._body()))
         elif path == "/api/layout":
             self._json(200, application.set_layout(self._body()))
+        elif path == "/api/weather":
+            if self.command == "GET":
+                result = application.weather.snapshot()
+            else:
+                result = application.weather.configure(self._body())
+            self._json(200, result)
         elif path.startswith("/api/cameras/"):
             camera_id = path.rsplit("/", 1)[1]
             if self.command == "PATCH":

@@ -13,6 +13,8 @@ const addForm = find('#add-camera-form');
 const macInput = find('#camera-mac');
 const nameInput = find('#camera-name');
 const rotationSelect = find('#rotation-interval');
+const infoTile = find('#info-tile');
+const weatherForm = find('#weather-form');
 const rotationValues = ['0', '10', '30', '60', '300'];
 const layoutButtons = [...document.querySelectorAll('.layout-options button')];
 const mobile = matchMedia('(max-width: 699px)');
@@ -25,6 +27,7 @@ const state = {
     cameraRevision: 0, layoutRevision: 0, layoutDirty: false,
     spotlight: readSpotlight(), loadFailed: false,
     rotationSeconds: readRotationInterval(),
+    weatherEnabled: false,
 };
 let loadTimer = 0;
 let loadPromise = null;
@@ -36,6 +39,15 @@ let idleTimer = 0;
 let pointerOverBar = false;
 let lastPointer = null;
 let nextRotationAt = Date.now() + state.rotationSeconds * 1000;
+let weatherData = null;
+let weatherPromise = null;
+let weatherSaving = false;
+let weatherRevision = 0;
+let weatherFormRevision = 0;
+let nextWeatherAt = 0;
+let weatherPollUntil = 0;
+let infoMinute = '';
+let infoDay = '';
 
 function readSpotlight() {
     try { return localStorage.getItem('kcd.spotlight'); } catch { return null; }
@@ -134,6 +146,197 @@ async function request(path, {method = 'GET', body, image = false, signal} = {})
         clearTimeout(timer);
         if (signal) signal.removeEventListener('abort', abort);
     }
+}
+
+function conditionFor(code) {
+    if (code === 0) return 'Clear';
+    if (code === 1 || code === 2) return 'Partly cloudy';
+    if (code === 45 || code === 48) return 'Fog';
+    if (code >= 51 && code <= 57) return 'Drizzle';
+    if (code >= 61 && code <= 67) return 'Rain';
+    if ((code >= 71 && code <= 77) || code === 85 || code === 86) return 'Snow';
+    if (code >= 80 && code <= 82) return 'Showers';
+    if (code >= 95 && code <= 99) return 'Thunderstorm';
+    return 'Cloudy';
+}
+
+function weatherIcon(code, isDay = true) {
+    const condition = conditionFor(code);
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.classList.add('weather-icon');
+    svg.setAttribute('viewBox', '0 0 32 32');
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', condition);
+    svg.setAttribute('focusable', 'false');
+    const paths = [];
+    const sun = 'M16 5a6 6 0 1 0 0 12 6 6 0 0 0 0-12 M16 1v2 M16 19v2 M6 11H4 M28 11h-2 M9 4 7 2 M23 4l2-2 M9 18l-2 2 M23 18l2 2';
+    const moon = 'M19 2a9 9 0 1 0 9 13A10 10 0 0 1 19 2Z';
+    const cloud = 'M8 22a5 5 0 1 1 1-10 7 7 0 0 1 13 1 4.5 4.5 0 1 1 2 9Z';
+    if (condition === 'Clear' || condition === 'Partly cloudy') paths.push(isDay ? sun : moon);
+    if (condition !== 'Clear') paths.push(cloud);
+    if (condition === 'Fog') paths.push('M5 26h22 M9 30h14');
+    if (condition === 'Drizzle') paths.push('M10 26h.1 M16 28h.1 M22 26h.1');
+    if (condition === 'Rain') paths.push('M10 25l-2 4 M17 25l-2 4 M24 25l-2 4');
+    if (condition === 'Showers') paths.push('M10 25l-2 4 M22 25l-2 4 M16 26h.1');
+    if (condition === 'Snow') paths.push('M10 25v6 M7 28h6 M22 25v6 M19 28h6');
+    if (condition === 'Thunderstorm') paths.push('M17 22l-4 5h5l-3 4');
+    paths.forEach(path => {
+        const shape = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        shape.setAttribute('d', path);
+        svg.appendChild(shape);
+    });
+    return svg;
+}
+
+function localDate(now) {
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+function renderWeather() {
+    const forecast = weatherData?.forecast;
+    const fresh = forecast && Date.now() / 1000 - forecast.updated <= 3 * 3600;
+    const ready = weatherData?.status === 'ok' && fresh;
+    find('#info-message').hidden = Boolean(ready);
+    find('#info-weather').hidden = !ready;
+    find('#info-message').textContent = weatherData?.status === 'loading' && !forecast
+        ? 'Loading weather…' : 'Weather unavailable';
+    if (!ready) return;
+    const current = forecast.current;
+    find('#info-temperature').textContent = `${current.temp}°`;
+    find('#info-condition').replaceChildren(weatherIcon(current.code, current.is_day), document.createTextNode(conditionFor(current.code)));
+    find('#info-details').textContent = `Feels ${current.feels}° · Wind ${current.wind} ${weatherData.units === 'c' ? 'km/h' : 'mph'}`;
+    find('#info-place').textContent = weatherData.name;
+    find('#info-place').title = weatherData.name;
+    const today = localDate(new Date());
+    const days = forecast.days.filter(day => day.date >= today).slice(0, 5).map(day => {
+        const node = document.createElement('div');
+        node.className = 'forecast-day';
+        const label = document.createElement('span');
+        label.textContent = day.date === today ? 'Today'
+            : new Date(`${day.date}T12:00:00`).toLocaleDateString([], {weekday: 'short'});
+        const range = document.createElement('span');
+        range.textContent = `${day.high}° / ${day.low}°`;
+        const rain = document.createElement('span');
+        rain.className = 'forecast-rain';
+        rain.textContent = day.rain >= 20 ? `${day.rain}%` : '';
+        node.append(label, weatherIcon(day.code), range, rain);
+        return node;
+    });
+    find('#info-forecast').replaceChildren(...days);
+}
+
+function acceptWeather(data) {
+    if (!data || typeof data.enabled !== 'boolean' || !['f', 'c'].includes(data.units) ||
+        typeof data.place !== 'string' || typeof data.name !== 'string' ||
+        !['off', 'loading', 'ok', 'unavailable'].includes(data.status)) throw new ApiError('Weather is unavailable.');
+    weatherData = data;
+    const changed = state.weatherEnabled !== data.enabled;
+    state.weatherEnabled = data.enabled;
+    if (changed) renderPage();
+    renderWeather();
+    const now = Date.now();
+    if (data.status === 'loading') {
+        if (!weatherPollUntil) weatherPollUntil = now + 60000;
+        nextWeatherAt = now < weatherPollUntil ? Math.min(now + 5000, weatherPollUntil) : now + 300000;
+    } else {
+        weatherPollUntil = 0;
+        nextWeatherAt = now + 300000;
+    }
+}
+
+function loadWeather() {
+    if (weatherSaving) return Promise.resolve(null);
+    if (weatherPromise) return weatherPromise;
+    const revision = weatherRevision;
+    weatherPromise = (async () => {
+        try {
+            const data = await request('api/weather');
+            if (revision !== weatherRevision) return null;
+            acceptWeather(data);
+            return data;
+        } catch {
+            if (revision === weatherRevision) {
+                nextWeatherAt = Date.now() + 300000;
+                weatherPollUntil = 0;
+                if (!weatherData?.forecast) {
+                    find('#info-message').textContent = 'Weather unavailable';
+                    find('#info-weather').hidden = true;
+                    find('#info-message').hidden = false;
+                }
+            }
+            return null;
+        } finally { weatherPromise = null; }
+    })();
+    return weatherPromise;
+}
+
+function fillWeatherSettings(data) {
+    find('#weather-enabled').checked = data.enabled;
+    find('#weather-place').value = data.place;
+    find('#weather-units').value = data.units;
+    find('#weather-fields').disabled = weatherSaving;
+    find('#weather-result').textContent = data.enabled && data.name ? `Showing weather for ${data.name}.` : '';
+}
+
+async function loadWeatherSettings() {
+    const revision = ++weatherFormRevision;
+    if (weatherData && !weatherSaving) fillWeatherSettings(weatherData);
+    const data = await loadWeather();
+    if (!setupDialog.open || weatherSaving || revision !== weatherFormRevision) return;
+    if (data) fillWeatherSettings(data);
+    else {
+        find('#weather-fields').disabled = false;
+        find('#weather-error').textContent = 'Weather settings could not load. Try saving again.';
+    }
+}
+
+async function saveWeather(event) {
+    event.preventDefault();
+    if (weatherSaving) return;
+    const body = {enabled: find('#weather-enabled').checked, place: find('#weather-place').value, units: find('#weather-units').value};
+    weatherSaving = true;
+    weatherRevision++;
+    weatherFormRevision++;
+    find('#weather-fields').disabled = true;
+    find('#weather-progress').textContent = 'Looking up the place…';
+    find('#weather-error').textContent = '';
+    find('#weather-result').textContent = '';
+    try {
+        const data = await request('api/weather', {method: 'PUT', body});
+        weatherPollUntil = 0;
+        acceptWeather(data);
+        fillWeatherSettings(data);
+        find('#weather-result').textContent = data.enabled ? `Showing weather for ${data.name}.` : 'Info tile hidden.';
+        // Let an older GET finish before fetching the newly saved settings.
+        if (weatherPromise) await weatherPromise;
+        weatherSaving = false;
+        await loadWeather();
+    } catch (error) {
+        find('#weather-error').textContent = error.message;
+    } finally {
+        weatherSaving = false;
+        find('#weather-fields').disabled = false;
+        find('#weather-progress').textContent = '';
+    }
+}
+
+function weatherTick() {
+    const now = new Date();
+    const minute = `${localDate(now)}:${now.getHours()}:${now.getMinutes()}`;
+    if (minute !== infoMinute) {
+        infoMinute = minute;
+        find('#info-clock').dateTime = now.toISOString();
+        find('#info-clock').textContent = now.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+    }
+    const day = localDate(now);
+    if (day !== infoDay) {
+        infoDay = day;
+        find('#info-date').dateTime = day;
+        find('#info-date').textContent = now.toLocaleDateString([], {weekday: 'long', month: 'long', day: 'numeric'});
+        renderWeather();
+    }
+    if (weatherData?.forecast && now.getTime() / 1000 - weatherData.forecast.updated > 3 * 3600 && !find('#info-weather').hidden) renderWeather();
+    if (now.getTime() >= nextWeatherAt) loadWeather();
 }
 
 function normalizeMac(value) {
@@ -564,8 +767,10 @@ function renderPage() {
     if (spotlight && grid.dataset.layout !== 'spotlight') resetRotation();
     if (!state.cameras.some(camera => camera.id === state.spotlight)) state.spotlight = state.cameras[0]?.id ?? null;
     const others = spotlight ? state.cameras.filter(camera => camera.id !== state.spotlight) : state.cameras;
-    const slots = spotlight ? 4 : layout === 'auto' ? Math.max(1, state.cameras.length)
+    const info = state.weatherEnabled && state.cameras.length > 0;
+    const capacity = spotlight ? 4 : layout === 'auto' ? Math.max(1, state.cameras.length)
         : Number(layout.split('x')[0]) * Number(layout.split('x')[1]);
+    const slots = capacity - (info && layout !== 'auto' ? 1 : 0);
     state.pageCount = Math.max(1, Math.ceil(others.length / slots));
     state.page = Math.max(0, Math.min(state.page, state.pageCount - 1));
     const visible = others.slice(state.page * slots, (state.page + 1) * slots);
@@ -587,9 +792,15 @@ function renderPage() {
         }
     }
     grid.dataset.layout = layout;
-    grid.classList.toggle('spotlight-single', spotlight && state.cameras.length === 1);
-    grid.dataset.auto = state.cameras.length === 1 ? 'single' : state.cameras.length === 2 ? 'pair'
-        : state.cameras.length <= 4 ? 'quad' : 'many';
+    infoTile.hidden = !info;
+    infoTile.classList.toggle('spotlight-strip', spotlight);
+    infoTile.style.setProperty('grid-column', layout === 'auto' ? 'auto' : spotlight ? '2' : layout.split('x')[0]);
+    infoTile.style.setProperty('grid-row', layout === 'auto' ? 'auto' : spotlight ? '4' : layout.split('x')[1]);
+    grid.classList.toggle('spotlight-single', spotlight && state.cameras.length === 1 && !info);
+    const autoCount = state.cameras.length + (info ? 1 : 0);
+    grid.dataset.auto = autoCount === 1 ? 'single' : autoCount === 2 ? 'pair'
+        : autoCount <= 4 ? 'quad'
+        : mobile.matches ? 'many' : autoCount <= 6 ? 'six' : autoCount <= 9 ? 'nine' : 'many';
     dashboard.dataset.effectiveLayout = layout;
     grid.hidden = !state.cameras.length;
     find('#empty-state').hidden = Boolean(state.cameras.length);
@@ -799,6 +1010,8 @@ async function saveLayouts() {
 function openSetup() {
     if (setupDialog.open) return;
     setupDialog.showModal();
+    find('#weather-error').textContent = '';
+    loadWeatherSettings();
     activate();
     (find('#add-fields').disabled ? find('#close-setup') : macInput).focus();
 }
@@ -818,6 +1031,8 @@ setupDialog.addEventListener('close', () => {
 });
 rotationSelect.value = String(state.rotationSeconds);
 rotationSelect.addEventListener('change', changeRotationInterval);
+weatherForm.addEventListener('submit', saveWeather);
+weatherForm.addEventListener('input', () => { weatherFormRevision++; });
 addForm.addEventListener('submit', addCamera);
 macInput.addEventListener('input', () => {
     find('#mac-error').textContent = '';
@@ -888,10 +1103,12 @@ function dailyReload() {
 }
 
 updateClock();
+weatherTick();
 updateActivity();
 loadCameras();
 setInterval(() => {
     updateClock();
+    weatherTick();
     dailyReload();
     tiles.forEach(tile => tile.updatePlaybackStatus());
     rotateSpotlight();
