@@ -46,6 +46,7 @@
                 <span id="restart-banner" class="restart-banner" role="status" hidden>Restarting video…</span>
                 <span id="connection-message" class="connection-message" role="status" hidden></span>
                 <span id="layout-message" class="small-message" role="status"></span>
+                <span id="device-message" class="small-message" role="status"></span>
                 <button id="retry-layout" class="compact-button" type="button" hidden>Retry save</button>
             </div>
             <div class="status-controls">
@@ -54,6 +55,7 @@
                     <span id="page-label" role="status">Page 1 of 1</span>
                     <button id="next-page" class="compact-button" type="button">Next</button>
                 </nav>
+                <div id="device-controls" role="group" aria-label="Plugs and switches" hidden></div>
                 <div class="layout-options" role="group" aria-label="Grid layout">
                     <button type="button" data-layout="auto" aria-pressed="true">Auto</button>
                     <button type="button" data-layout="2x1" aria-pressed="false">2×1</button>
@@ -100,6 +102,26 @@
                     <legend class="sr-only">Manage cameras</legend>
                     <div id="setup-camera-list" class="setup-camera-list"></div>
                 </fieldset>
+            </section>
+            <section id="setup-devices" aria-labelledby="devices-title" hidden>
+                <h3 id="devices-title">Plugs and switches</h3>
+                <p class="field-help">Kasa plugs and switches on this network. Anyone using this screen can switch them.</p>
+                <p id="device-count" class="small-message"></p>
+                <fieldset id="manage-devices">
+                    <legend class="sr-only">Manage plugs and switches</legend>
+                    <div id="setup-device-list"></div>
+                </fieldset>
+                <form id="add-device-form" novalidate>
+                    <fieldset id="add-device-fields" disabled>
+                        <label for="device-mac">MAC address</label>
+                        <input id="device-mac" name="mac" required placeholder="AA:BB:CC:DD:EE:FF" autocomplete="off" spellcheck="false" aria-describedby="add-device-error">
+                        <label for="device-name">Name <span class="small-message">(optional)</span></label>
+                        <input id="device-name" name="name" maxlength="40" autocomplete="off">
+                        <button class="primary-button" type="submit">Add device</button>
+                    </fieldset>
+                </form>
+                <p id="add-device-progress" class="small-message" role="status" hidden>Looking for the device on your network…</p>
+                <p id="add-device-error" class="field-error" role="alert"></p>
             </section>
             <section aria-labelledby="rotation-title">
                 <h3 id="rotation-title">Spotlight rotation</h3>
@@ -148,6 +170,35 @@
             </section>
         </div>
     </dialog>
+
+    <template id="setup-device-template">
+        <article class="setup-camera">
+            <div class="camera-row-heading">
+                <strong class="row-name"></strong>
+                <span class="device-state"></span>
+            </div>
+            <p class="camera-address"><span class="row-mac"></span></p>
+            <div class="row-actions">
+                <button class="rename-device compact-button" type="button">Rename</button>
+                <button class="remove-device compact-button" type="button">Remove</button>
+            </div>
+            <form class="rename-form" hidden novalidate>
+                <input class="rename-input" aria-label="New device name" required maxlength="40" autocomplete="off">
+                <div class="row-actions">
+                    <button class="compact-button" type="submit">Save</button>
+                    <button class="cancel-name compact-button" type="button">Cancel</button>
+                </div>
+            </form>
+            <div class="remove-confirmation" role="group" hidden>
+                <p class="remove-question"></p>
+                <div class="row-actions">
+                    <button class="confirm-remove danger-button compact-button" type="button">Remove</button>
+                    <button class="cancel-remove compact-button" type="button">Cancel</button>
+                </div>
+            </div>
+            <p class="row-error field-error" role="alert"></p>
+        </article>
+    </template>
 
     <template id="setup-camera-template">
         <article class="setup-camera">

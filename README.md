@@ -128,6 +128,11 @@ and applies immediately without interrupting video.
   “Restarting video…” banner disappears when visible cameras are Live again or
   after ten seconds; the existing players reconnect automatically.
 
+**Plugs and switches:** in Setup, add up to six devices by MAC address, and
+rename or remove them from the same list. Their status-bar buttons show the
+reported state. Press **On** or **Off** to switch the device, or **?** to refresh
+its state. Anyone using this screen can switch the saved devices.
+
 The video area fills the screen above a slim, always-visible status bar with the
 local time, date, and live, offline and connecting counts for the visible cameras.
 Camera labels show a status dot and state in words when video is not live;
