@@ -139,6 +139,15 @@ def parse_forecast(payload):
         raise WeatherError("weather_unavailable") from None
 
 
+def parse_timezone(payload):
+    if not isinstance(payload, dict):
+        return None
+    name = payload.get("timezone")
+    if isinstance(name, str) and 1 <= len(name) <= 64 and re.fullmatch(r"[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*", name):
+        return name
+    return None
+
+
 class _NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, request, fp, code, message, headers, newurl):
         # Refuse all redirects, including redirects between the two allowed hosts.
@@ -172,6 +181,7 @@ class WeatherService:
         self._thread = None
         self._generation = 0
         self._forecast = None
+        self._timezone = None
         self._failed = False
         self._next_refresh = 0
 
@@ -189,7 +199,8 @@ class WeatherService:
             else:
                 status = "unavailable" if self._failed else "loading"
             result = {key: settings[key] for key in ("enabled", "place", "units", "name")}
-            result.update(forecast=forecast, status=status)
+            result.update(forecast=forecast, status=status,
+                          timezone=self._timezone if settings["enabled"] else None)
             return result
 
     def configure(self, body):
@@ -206,6 +217,8 @@ class WeatherService:
             with self._lock:
                 self.store.set_weather(dict(settings, **location))
                 self._generation += 1
+                if changed_place:
+                    self._timezone = None
                 if changed_place or settings["units"] != previous["units"]:
                     self._forecast = None
                 self._failed = False
@@ -220,7 +233,9 @@ class WeatherService:
                 return
             generation = self._generation
         try:
-            forecast = parse_forecast(self.fetch(build_forecast_url(settings["lat"], settings["lon"], settings["units"])))
+            payload = self.fetch(build_forecast_url(settings["lat"], settings["lon"], settings["units"]))
+            forecast = parse_forecast(payload)
+            timezone = parse_timezone(payload)
         except Exception:
             forecast = None
         with self._lock:
@@ -228,6 +243,8 @@ class WeatherService:
                 return
             if forecast is not None:
                 self._forecast = dict(forecast, updated=int(self.clock()))
+                if timezone is not None:
+                    self._timezone = timezone
             self._failed = forecast is None
             self._next_refresh = self.clock() + (120 if self._failed else 900)
 

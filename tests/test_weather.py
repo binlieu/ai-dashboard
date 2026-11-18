@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 
 from app.store import CameraStore
 from app.weather import (MAX_RESPONSE, WeatherError, WeatherService, _NoRedirect,
-                         build_forecast_url, fetch_json, parse_forecast, validate_settings)
+                         build_forecast_url, fetch_json, parse_forecast, parse_timezone, validate_settings)
 
 PLACE = {"results": [{"name": "Springfield", "admin1": "Illinois", "country": "United States",
                        "latitude": 39.80172, "longitude": -89.64371}]}
@@ -82,6 +82,16 @@ class TransportTests(unittest.TestCase):
                 validate_settings(dict(SETTINGS, place=place))
 
 
+class TimezoneTests(unittest.TestCase):
+    def test_length_boundaries_and_ascii_segments(self):
+        for name in ('A', 'A' * 64, 'Etc/GMT-5', 'A_1/B+2/C-3'):
+            with self.subTest(name=name):
+                self.assertEqual(parse_timezone({'timezone': name}), name)
+        for name in ('A' * 65, 'A//B', 'A.B', 'A\\B', 'A\x00', 'Ａ/B', 'A/١'):
+            with self.subTest(name=name):
+                self.assertIsNone(parse_timezone({'timezone': name}))
+
+
 class WeatherServiceTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -100,7 +110,7 @@ class WeatherServiceTests(unittest.TestCase):
 
     def test_default_snapshot_never_fetches_and_does_not_expose_coordinates(self):
         self.assertEqual(self.service.snapshot(), {'enabled': False, 'place': '', 'units': 'f',
-                                                   'name': '', 'forecast': None, 'status': 'off'})
+                                                   'name': '', 'forecast': None, 'status': 'off', 'timezone': None})
         self.service.refresh_once()
         self.fetch.assert_not_called()
         self.assertNotIn('lat', self.enable())
@@ -198,6 +208,47 @@ class WeatherServiceTests(unittest.TestCase):
         self.assertIsNone(self.service.snapshot()['forecast'])
         self.service.refresh_once()
         self.assertEqual(self.service.snapshot()['status'], 'ok')
+
+    def test_old_place_fetch_cannot_set_the_new_places_timezone(self):
+        self.enable()
+        def fetch(url):
+            if '/search?' in url:
+                return PLACE
+            self.service.configure(dict(SETTINGS, place='90210'))
+            return dict(forecast_payload(), timezone='America/Chicago')
+        self.service.fetch = fetch
+        self.service.refresh_once()
+        snapshot = self.service.snapshot()
+        self.assertEqual(snapshot['place'], '90210')
+        self.assertIsNone(snapshot['forecast'])
+        self.assertIsNone(snapshot['timezone'])
+
+    def test_timezone_changes_only_with_a_successful_forecast(self):
+        self.enable()
+        self.service.fetch = Mock(return_value=dict(forecast_payload(), timezone='America/Chicago'))
+        self.service.refresh_once()
+        self.assertEqual(self.service.snapshot()['timezone'], 'America/Chicago')
+        self.now += 900
+        self.service.fetch.return_value = {'timezone': 'America/Los_Angeles'}
+        self.service.refresh_once()
+        self.assertEqual(self.service.snapshot()['timezone'], 'America/Chicago')
+        self.now += 120
+        self.service.fetch.return_value = dict(forecast_payload(), timezone='America/Los_Angeles')
+        self.service.refresh_once()
+        self.assertEqual(self.service.snapshot()['timezone'], 'America/Los_Angeles')
+
+    def test_timezone_is_memory_only_and_cleared_by_a_disabled_place_change(self):
+        self.enable()
+        self.service.fetch = Mock(return_value=dict(forecast_payload(), timezone='America/Chicago'))
+        self.service.refresh_once()
+        self.assertNotIn('timezone', self.store.get_weather())
+        restarted = WeatherService(self.store, self.fetch, lambda: self.now)
+        self.addCleanup(restarted.stop)
+        self.assertIsNone(restarted.snapshot()['timezone'])
+        self.service.configure(dict(SETTINGS, enabled=False, place='90210'))
+        self.assertIsNone(self.service.snapshot()['timezone'])
+        self.service.fetch.return_value = PLACE
+        self.assertIsNone(self.service.configure(dict(SETTINGS, place='90210'))['timezone'])
 
     def test_geocode_does_not_hold_store_or_snapshot_locks(self):
         entered, release, completed = threading.Event(), threading.Event(), threading.Event()
