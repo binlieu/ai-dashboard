@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="referrer" content="no-referrer">
+    <title>Camera</title>
+    <link rel="stylesheet" href="./dashboard.css">
+    <script type="module" src="./dashboard.js"></script>
+</head>
+<body>
+    <main class="dashboard">
+        <header class="dashboard-header">
+            <div class="header-main">
+                <h1>Camera</h1>
+                <span id="summary" class="summary" role="status">Loading cameras…</span>
+                <time id="clock" class="clock" aria-label="Local time"></time>
+                <button id="setup-button" type="button" aria-haspopup="dialog" aria-controls="setup-dialog">Setup</button>
+            </div>
+            <div class="header-tools">
+                <div class="layout-options" role="group" aria-label="Grid layout">
+                    <button type="button" data-layout="auto" aria-pressed="true">Auto</button>
+                    <button type="button" data-layout="2x1" aria-pressed="false">2×1</button>
+                    <button type="button" data-layout="2x2" aria-pressed="false">2×2</button>
+                    <button type="button" data-layout="3x3" aria-pressed="false">3×3</button>
+                    <button type="button" data-layout="4x4" aria-pressed="false">4×4</button>
+                </div>
+                <span id="layout-message" class="small-message" role="status"></span>
+                <button id="retry-layout" class="compact-button" type="button" hidden>Retry save</button>
+                <nav id="pagination" class="pagination" aria-label="Camera pages" hidden>
+                    <button id="previous-page" class="compact-button" type="button">Previous</button>
+                    <span id="page-label" role="status">Page 1 of 1</span>
+                    <button id="next-page" class="compact-button" type="button">Next</button>
+                </nav>
+            </div>
+            <p id="restart-banner" class="restart-banner" role="status" hidden>Restarting video…</p>
+            <p id="connection-message" class="connection-message" role="status" hidden></p>
+        </header>
+
+        <div class="dashboard-content">
+            <section id="camera-grid" class="camera-grid" aria-label="Cameras" hidden></section>
+            <section id="empty-state" class="empty-state">
+                <h2 id="empty-title">Loading cameras…</h2>
+                <p id="empty-description">Your cameras will appear here.</p>
+                <button id="empty-setup" type="button">Open Setup</button>
+                <button id="retry-cameras" type="button" hidden>Retry connection</button>
+            </section>
+        </div>
+        <noscript>Enable JavaScript to view the camera.</noscript>
+    </main>
+
+    <dialog id="setup-dialog" aria-labelledby="setup-title">
+        <header class="setup-header">
+            <h2 id="setup-title">Setup</h2>
+            <button id="close-setup" type="button">Close</button>
+        </header>
+        <div class="setup-body">
+            <section aria-labelledby="add-title">
+                <h3 id="add-title">Add camera</h3>
+                <p id="camera-count" class="small-message">Loading camera list…</p>
+                <p id="add-limit" class="small-message" role="status"></p>
+                <form id="add-camera-form" novalidate>
+                    <fieldset id="add-fields" disabled>
+                        <label for="camera-mac">MAC address <span class="small-message">(required)</span></label>
+                        <input id="camera-mac" name="mac" required placeholder="AA:BB:CC:DD:EE:FF" autocomplete="off" spellcheck="false" aria-describedby="mac-help mac-error">
+                        <p id="mac-help" class="field-help">Find it in the Kasa app under Device settings → Device info, or on the camera's label.</p>
+                        <p id="mac-error" class="field-error" role="alert"></p>
+                        <label for="camera-name">Name <span class="small-message">(optional)</span></label>
+                        <input id="camera-name" name="name" maxlength="40" autocomplete="off" placeholder="Camera name">
+                        <button class="primary-button" type="submit">Add camera</button>
+                    </fieldset>
+                </form>
+                <p id="add-progress" class="small-message" role="status"></p>
+                <p id="add-error" class="field-error" role="alert"></p>
+                <p id="setup-announcement" class="setup-announcement" role="status"></p>
+            </section>
+            <section aria-labelledby="cameras-title">
+                <h3 id="cameras-title">Cameras</h3>
+                <p id="setup-empty" class="small-message">No cameras added yet.</p>
+                <fieldset id="manage-fields">
+                    <legend class="sr-only">Manage cameras</legend>
+                    <div id="setup-camera-list" class="setup-camera-list"></div>
+                </fieldset>
+            </section>
+        </div>
+    </dialog>
+
+    <template id="setup-camera-template">
+        <article class="setup-camera">
+            <div class="camera-row-heading">
+                <span class="camera-dot" aria-hidden="true"></span>
+                <strong class="row-name"></strong>
+            </div>
+            <p class="camera-address"><span class="row-mac"></span><span class="row-ip"></span></p>
+            <div class="row-actions">
+                <button class="edit-camera compact-button" type="button">Edit</button>
+                <button class="remove-camera compact-button" type="button">Remove</button>
+            </div>
+            <form class="rename-form" hidden novalidate>
+                <input class="rename-input" aria-label="New camera name" required maxlength="40" autocomplete="off">
+                <div class="row-actions">
+                    <button class="save-name compact-button" type="submit">Save</button>
+                    <button class="cancel-name compact-button" type="button">Cancel</button>
+                </div>
+            </form>
+            <div class="remove-confirmation" role="group" hidden>
+                <p class="remove-question"></p>
+                <div class="row-actions">
+                    <button class="confirm-remove danger-button compact-button" type="button">Remove</button>
+                    <button class="cancel-remove compact-button" type="button">Cancel</button>
+                </div>
+            </div>
+            <p class="row-error field-error" role="alert"></p>
+        </article>
+    </template>
+
+    <template id="camera-template">
+        <article class="camera-card">
+            <header class="camera-header">
+                <h2 class="camera-name"></h2>
+                <div class="connection">
+                    <span class="status" data-state="connecting" role="status">Connecting</span>
+                    <span class="last-frame">last frame: waiting</span>
+                </div>
+            </header>
+            <section class="camera-tile">
+                <div class="player-container"></div>
+                <span class="tile-label" aria-hidden="true"></span>
+                <p class="unavailable-message" hidden>Not found on the network</p>
+            </section>
+            <footer class="camera-footer">
+                <div class="controls">
+                    <button class="snapshot" type="button">Snapshot</button>
+                    <button class="fullscreen" type="button">Fullscreen</button>
+                </div>
+                <p class="notice" role="status"></p>
+            </footer>
+        </article>
+    </template>
+</body>
+</html>
