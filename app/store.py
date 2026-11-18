@@ -14,7 +14,7 @@ from .envfile import split_csv
 from .security import CAMERA_ID
 
 MAX_CAMERAS = 16
-LAYOUTS = ("auto", "2x1", "2x2", "3x3", "4x4")
+LAYOUTS = ("auto", "2x1", "2x2", "3x3", "4x4", "spotlight")
 
 
 class StoreError(ValueError):
@@ -183,7 +183,7 @@ class CameraStore:
     def set_layout(self, layout):
         with self.lock:
             if layout not in LAYOUTS:
-                raise StoreError("invalid_layout", "Choose auto, 2x1, 2x2, 3x3, or 4x4.")
+                raise StoreError("invalid_layout", "Choose auto, 2x1, 2x2, 3x3, 4x4, or spotlight.")
             state = self.snapshot()
             state["layout"] = layout
             self._commit(state)
