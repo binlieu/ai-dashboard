@@ -222,7 +222,7 @@ For unattended wall displays the page reloads itself once a day between 04:00
 and 05:00 local time, only while the server answers, and not while Setup or a
 fullscreen tile is open.
 
-## Same-origin camera API
+## Same-origin API
 
 The dashboard uses these same-origin endpoints.
 
@@ -232,6 +232,11 @@ The dashboard uses these same-origin endpoints.
 | POST | `/api/cameras` | JSON `{ "mac": "...", "name": "..." }`; name optional. Discover, probe, save and restart; returns 201. |
 | PATCH | `/api/cameras/camN` | JSON `{ "name": "..." }`; rename without restarting. |
 | DELETE | `/api/cameras/camN` | Remove and restart; returns 204. |
+| GET | `/api/devices` | Max 6 and saved plugs/switches with ID, name, MAC and cached `on`, `off` or `unknown` state; no IPs. |
+| POST | `/api/devices` | JSON `{ "mac": "...", "name": "..." }`; name optional. Discover, identify, read and save; returns 201. |
+| PATCH | `/api/devices/devN` | JSON `{ "name": "..." }`; rename a saved plug or switch. |
+| DELETE | `/api/devices/devN` | Remove a saved plug or switch without changing its power state; returns 204. |
+| PUT | `/api/devices/devN/state` | Exactly `{ "on": true }` or `{ "on": false }`; switch and return the reported state with ID and name. |
 | PUT | `/api/layout` | JSON `{ "layout": "2x2" }`; allowed: `auto`, `2x1`, `2x2`, `3x3`, `4x4`, `spotlight`. |
 | GET | `/api/weather` | Settings, cached forecast, and `timezone` (zone name when enabled and known, otherwise `null`), with status `off`, `loading`, `ok` or `unavailable`; never exposes coordinates. |
 | PUT | `/api/weather` | JSON `{ "enabled": true, "place": "Springfield", "units": "f" }`; units `f` or `c`. Resolves enabled places and returns the same shape as GET. |
@@ -256,6 +261,17 @@ an open stalled socket is restarted at most once per thirty seconds, after its
 old close handler completes. Snapshot saves a name-based JPEG filename;
 Fullscreen expands the selected tile. Video stays muted because camera G.711
 audio is not carried over MSE. Use a current browser with H.264 MSE support.
+
+### Plugs and switches
+
+The API supports up to six single-outlet Kasa plugs and switches saved by MAC
+address. Control uses local TCP 9999 or KLAP over HTTP port 80 and the existing
+Kasa login in `.env`; credentials and device IPs are never returned by the device
+API or saved with devices. Names and MACs remain in the private state file, and
+the setup API lists MACs. States are polled every 15 seconds, with unknown devices
+retried every 3 seconds. Failed operations report `unknown`; a failed write is
+not automatically repeated. Only connect appliances that are safe to switch
+remotely. Multi-outlet devices are not supported. Device operations do not restart video.
 
 ## Troubleshooting
 

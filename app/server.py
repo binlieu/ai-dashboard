@@ -28,9 +28,10 @@ CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; c
 class DashboardApplication:
     def __init__(self, store, bridge, user, password_b64, lookup=ip_for_mac,
                  sweep=sweep_local_network, probe=probe_camera, initial_cameras=None, weather=None,
-                 identify=identify_device):
+                 identify=identify_device, devices=None):
         self.store, self.bridge = store, bridge
         self.weather = weather if weather is not None else WeatherService(store)
+        self.devices = devices
         self._user, self._password_b64 = user, password_b64
         self.lookup, self.sweep, self.probe = lookup, sweep, probe
         self.identify = identify
@@ -127,6 +128,9 @@ class DashboardApplication:
                     pass
 
     def start_background(self):
+        if self.devices is not None:
+            self.devices.start()
+
         def refresh():
             while not self._stop.wait(60):
                 try:
@@ -138,6 +142,8 @@ class DashboardApplication:
 
     def stop_background(self):
         self._stop.set()
+        if self.devices is not None:
+            self.devices.stop()
         if self._refresh_thread is not None:
             self._refresh_thread.join(timeout=5)
 
@@ -299,6 +305,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             else:
                 result = application.weather.configure(self._body())
             self._json(200, result)
+        elif path == "/api/devices" or path.startswith("/api/devices/"):
+            self._device_route(path, application.devices)
         elif path.startswith("/api/cameras/"):
             camera_id = path.rsplit("/", 1)[1]
             if self.command == "PATCH":
@@ -319,6 +327,32 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     self._send(status, body, content_type)
         else:
             self._static(path)
+
+    def _device_route(self, path, service):
+        try:
+            path = unquote(path, errors="strict")
+            if service is None:
+                raise StoreError("unreachable", "The device did not answer.", 502)
+            if path == "/api/devices":
+                if self.command == "GET":
+                    self._json(200, service.settings())
+                else:
+                    self._json(201, service.add(self._body()))
+            else:
+                device_id = path.split("/")[3]
+                if path.endswith("/state"):
+                    self._json(200, service.set_state(device_id, self._body()))
+                elif self.command == "PATCH":
+                    self._json(200, service.rename(device_id, self._body()))
+                elif self.command == "DELETE":
+                    service.remove(device_id)
+                    self._send(204)
+                else:
+                    raise StoreError("not_found", "Device not found.", 404)
+        except StoreError:
+            raise
+        except Exception:
+            raise StoreError("unreachable", "The device did not answer.", 502) from None
 
     def _static(self, path):
         relative = "index.html" if path == "/" else unquote(path).lstrip("/")

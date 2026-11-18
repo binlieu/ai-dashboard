@@ -12,9 +12,10 @@ import unicodedata
 
 from .discovery import normalize_mac
 from .envfile import split_csv
-from .security import CAMERA_ID
+from .security import CAMERA_ID, DEVICE_ID
 
 MAX_CAMERAS = 16
+MAX_DEVICES = 6
 LAYOUTS = ("auto", "2x1", "2x2", "3x3", "4x4", "spotlight")
 WEATHER_DEFAULTS = {"enabled": False, "place": "", "units": "f", "name": "", "lat": None, "lon": None}
 
@@ -119,7 +120,7 @@ def validate_state(state, warning=None):
             raise ValueError("Unexpected camera fields")
         ids.add(camera["id"])
         macs.add(mac)
-    if set(state) - {"version", "next_id", "layout", "cameras", "weather"}:
+    if set(state) - {"version", "next_id", "layout", "cameras", "weather", "devices", "next_device_id"}:
         raise ValueError("Unexpected state fields")
     state = copy.deepcopy(state)
     if "weather" in state:
@@ -129,7 +130,32 @@ def validate_state(state, warning=None):
             state["weather"] = WEATHER_DEFAULTS.copy()
             if warning:
                 warning("Weather settings were invalid and have been reset; cameras were preserved.")
+    if "devices" in state or "next_device_id" in state:
+        try:
+            _validate_devices(state.get("devices"), state.get("next_device_id"), macs)
+        except (ValueError, TypeError, OverflowError):
+            state["devices"], state["next_device_id"] = [], 1
+            if warning:
+                warning("Device settings were invalid and have been reset; cameras were preserved.")
     return state
+
+
+def _validate_devices(devices, next_id, camera_macs):
+    if type(next_id) is not int or next_id < 1:
+        raise ValueError("Invalid next device ID")
+    if not isinstance(devices, list) or len(devices) > MAX_DEVICES:
+        raise ValueError("Invalid device list")
+    ids, macs = set(), set(camera_macs)
+    for device in devices:
+        if (not isinstance(device, dict) or set(device) != {"id", "mac", "name"} or
+                not isinstance(device["id"], str) or not DEVICE_ID.fullmatch(device["id"])):
+            raise ValueError("Invalid device fields")
+        mac = normalize_mac(device["mac"])
+        if (not mac or mac != device["mac"] or mac in macs or device["id"] in ids or
+                int(device["id"][3:]) >= next_id or validate_name(device["name"]) != device["name"]):
+            raise ValueError("Invalid device state")
+        ids.add(device["id"])
+        macs.add(mac)
 
 
 class CameraStore:
@@ -143,7 +169,11 @@ class CameraStore:
             try:
                 loaded = json.loads(self.path.read_text(encoding="utf-8"))
                 self._state = validate_state(loaded, warning)
-                if "weather" in loaded and loaded["weather"] != self._state["weather"]:
+                if (("weather" in loaded and loaded["weather"] != self._state["weather"]) or
+                        ("devices" in self._state and
+                         (loaded.get("devices") != self._state["devices"] or
+                          type(loaded.get("next_device_id")) is not int or
+                          loaded.get("next_device_id") != self._state["next_device_id"]))):
                     self._save(self._state)
                 return
             except (ValueError, TypeError, KeyError, UnicodeError):
@@ -170,9 +200,15 @@ class CameraStore:
     def restore(self, state):
         with self.lock:
             state = validate_state(state)
-            # Camera rollback must not overwrite a weather save made during bridge I/O.
+            # Camera rollback must preserve weather and device saves made during bridge I/O.
             if "weather" in self._state:
                 state["weather"] = copy.deepcopy(self._state["weather"])
+            if "devices" in self._state:
+                state["devices"] = copy.deepcopy(self._state["devices"])
+                state["next_device_id"] = self._state["next_device_id"]
+                camera_macs = {camera["mac"] for camera in state["cameras"]}
+                if any(device["mac"] in camera_macs for device in state["devices"]):
+                    raise StoreError("duplicate", "That MAC address is already configured as a device.", 409)
             state["next_id"] = max(state["next_id"], self._state["next_id"])
             self._commit(state)
 
@@ -192,7 +228,8 @@ class CameraStore:
             mac = normalize_mac(mac)
             if not mac:
                 raise StoreError("invalid_mac", "Enter a valid camera MAC address.")
-            if any(camera["mac"] == mac for camera in self._state["cameras"]):
+            if any(camera["mac"] == mac for camera in self._state["cameras"]) or any(
+                    device["mac"] == mac for device in self._state.get("devices", [])):
                 raise StoreError("duplicate", "That camera is already configured.", 409)
             if len(self._state["cameras"]) >= MAX_CAMERAS or self._state["next_id"] > 9999:
                 raise StoreError("limit", "The camera limit has been reached.", 409)
@@ -235,3 +272,47 @@ class CameraStore:
             state["layout"] = layout
             self._commit(state)
             return layout
+
+    def get_devices(self):
+        with self.lock:
+            return copy.deepcopy(self._state.get("devices", []))
+
+    def check_add_device(self, mac, name=None):
+        with self.lock:
+            mac = normalize_mac(mac)
+            if not mac:
+                raise StoreError("invalid_mac", "Enter a valid device MAC address.")
+            if any(item["mac"] == mac for item in self._state["cameras"] + self._state.get("devices", [])):
+                raise StoreError("duplicate", "That MAC address is already configured.", 409)
+            index = self._state.get("next_device_id", 1)
+            if len(self._state.get("devices", [])) >= MAX_DEVICES or index > 9999:
+                raise StoreError("limit", "The device limit has been reached.", 409)
+            return {"id": "dev%s" % index, "mac": mac,
+                    "name": validate_name("Device %s" % index if name is None else name)}
+
+    def add_device(self, mac, name=None):
+        with self.lock:
+            device = self.check_add_device(mac, name)
+            state = self.snapshot()
+            state.setdefault("devices", []).append(device)
+            state["next_device_id"] = state.get("next_device_id", 1) + 1
+            self._commit(state)
+            return copy.deepcopy(device)
+
+    def rename_device(self, device_id, name):
+        with self.lock:
+            state = self.snapshot()
+            for device in state.get("devices", []):
+                if device["id"] == device_id:
+                    device["name"] = validate_name(name)
+                    self._commit(state)
+                    return copy.deepcopy(device)
+            raise StoreError("not_found", "Device not found.", 404)
+
+    def remove_device(self, device_id):
+        with self.lock:
+            state = self.snapshot()
+            if not any(device["id"] == device_id for device in state.get("devices", [])):
+                raise StoreError("not_found", "Device not found.", 404)
+            state["devices"] = [device for device in state["devices"] if device["id"] != device_id]
+            self._commit(state)
