@@ -198,3 +198,9 @@ used. Integration tests use ephemeral loopback/Unix listeners where allowed;
 when a sandbox blocks bind(), connected socket pairs run the same handler,
 client and relay assertions without listening. Live TCP binding and real-camera
 playback still need verification outside such a sandbox.
+
+## License
+
+MIT, see [LICENSE](LICENSE). The files in `www/vendor/` come from
+[go2rtc](https://github.com/AlexxIT/go2rtc) v1.9.15 and are covered by its MIT
+license, included as `www/vendor/LICENSE-go2rtc`.
