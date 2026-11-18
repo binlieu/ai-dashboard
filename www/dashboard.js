@@ -805,7 +805,7 @@ statusBar.addEventListener('focusin', updateActivity);
 statusBar.addEventListener('focusout', () => queueMicrotask(updateActivity));
 document.addEventListener('keydown', event => {
     if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || setupDialog.open ||
-        event.target.closest('input, textarea, select, [contenteditable]')) return;
+        (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]'))) return;
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
         if (state.pageCount <= 1) return;
         event.preventDefault();
