@@ -1,4 +1,20 @@
+const themeValues = ['default', 'mission', 'hud', 'observatory'];
+const initialTheme = readTheme();
+applyTheme(initialTheme);
+
 import './vendor/video-stream.js';
+
+function readTheme() {
+    try {
+        const value = localStorage.getItem('kcd.theme');
+        return themeValues.includes(value) ? value : 'default';
+    } catch { return 'default'; }
+}
+
+function applyTheme(value) {
+    if (value === 'default') delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = value;
+}
 
 const find = selector => document.querySelector(selector);
 const dashboard = find('.dashboard');
@@ -13,11 +29,14 @@ const addForm = find('#add-camera-form');
 const macInput = find('#camera-mac');
 const nameInput = find('#camera-name');
 const rotationSelect = find('#rotation-interval');
+const themeSelect = find('#theme-select');
 const infoTile = find('#info-tile');
 const weatherForm = find('#weather-form');
 const rotationValues = ['0', '10', '30', '60', '300'];
 const layoutButtons = [...document.querySelectorAll('.layout-options button')];
 const mobile = matchMedia('(max-width: 699px)');
+const portraitDisplay = matchMedia('(orientation: portrait) and (min-width: 700px)');
+dashboard.dataset.orientation = portraitDisplay.matches ? 'portrait' : 'landscape';
 const layouts = ['auto', '2x1', '2x2', '3x3', '4x4', 'spotlight'];
 const tiles = new Map();
 const rows = new Map();
@@ -427,6 +446,7 @@ class CameraTile {
         const text = this.camera.name + suffix;
         if (this.label.textContent !== text) this.label.textContent = text;
         this.dot.dataset.state = status;
+        this.card.dataset.state = status;
         this.card.classList.toggle('is-offline', status === 'offline' || status === 'unavailable');
     }
 
@@ -748,6 +768,10 @@ function reconcile(cameras) {
     cameras.forEach((camera, index) => {
         if (tiles.has(camera.id)) tiles.get(camera.id).update(camera);
         else tiles.set(camera.id, new CameraTile(camera));
+        const tile = tiles.get(camera.id);
+        const feedIndex = String(index + 1).padStart(2, '0');
+        tile.card.dataset.index = feedIndex;
+        tile.label.dataset.index = feedIndex;
         placeNode(grid, tiles.get(camera.id).card, index);
         if (rows.has(camera.id)) rows.get(camera.id).update(camera);
         else rows.set(camera.id, new SetupRow(camera));
@@ -761,16 +785,45 @@ function effectiveLayout() {
     return mobile.matches ? 'auto' : state.layout;
 }
 
+function layoutGeometry(layout, orientation, tileCount = 0) {
+    const portrait = orientation === 'portrait';
+    if (layout === 'spotlight') {
+        const columns = 2;
+        const rows = portrait ? 3 : 4;
+        const capacity = portrait ? columns * (rows - 1) : (columns - 1) * rows;
+        return {columns, rows, capacity, scrolling: false};
+    }
+    if (layout === 'auto') {
+        let columns;
+        let rows;
+        const count = Math.max(1, tileCount);
+        if (portrait && count <= 4) { columns = 1; rows = count; }
+        else if (count === 1) { columns = 1; rows = 1; }
+        else if (count === 2) { columns = 2; rows = 1; }
+        else if (count <= 4) { columns = 2; rows = 2; }
+        else if (count <= 6) { columns = portrait ? 2 : 3; rows = portrait ? 3 : 2; }
+        else if (count <= (portrait ? 10 : 9)) { columns = portrait ? 2 : 3; rows = portrait ? 5 : 3; }
+        else return {columns: 1, rows: 1, capacity: count, scrolling: true};
+        return {columns, rows, capacity: portrait ? columns * rows : count, scrolling: false};
+    }
+    const [columns, rows] = portrait
+        ? {'2x1': [1, 2], '2x2': [1, 4], '3x3': [2, 5], '4x4': [2, 8]}[layout]
+        : layout.split('x').map(Number);
+    return {columns, rows, capacity: columns * rows, scrolling: false};
+}
+
 function renderPage() {
     const layout = effectiveLayout();
+    const orientation = portraitDisplay.matches ? 'portrait' : 'landscape';
+    dashboard.dataset.orientation = orientation;
     const spotlight = layout === 'spotlight';
     if (spotlight && grid.dataset.layout !== 'spotlight') resetRotation();
     if (!state.cameras.some(camera => camera.id === state.spotlight)) state.spotlight = state.cameras[0]?.id ?? null;
     const others = spotlight ? state.cameras.filter(camera => camera.id !== state.spotlight) : state.cameras;
     const info = state.weatherEnabled && state.cameras.length > 0;
-    const capacity = spotlight ? 4 : layout === 'auto' ? Math.max(1, state.cameras.length)
-        : Number(layout.split('x')[0]) * Number(layout.split('x')[1]);
-    const slots = capacity - (info && layout !== 'auto' ? 1 : 0);
+    const geometry = layoutGeometry(layout, orientation, state.cameras.length + (info ? 1 : 0));
+    const slots = Math.max(1, geometry.capacity - (info ? 1 : 0));
+    const boundedAuto = layout === 'auto' && orientation === 'portrait' && !geometry.scrolling;
     state.pageCount = Math.max(1, Math.ceil(others.length / slots));
     state.page = Math.max(0, Math.min(state.page, state.pageCount - 1));
     const visible = others.slice(state.page * slots, (state.page + 1) * slots);
@@ -781,26 +834,34 @@ function renderPage() {
         tile.setRole(spotlight && id === state.spotlight, spotlight && id !== state.spotlight);
         if (!visibleIds.has(id)) tile.setVisible(false);
     }
-    for (const placeholder of grid.querySelectorAll('.empty-slot')) placeholder.remove();
     visible.forEach(camera => tiles.get(camera.id).setVisible(true));
-    if (layout !== 'auto' && !spotlight && state.cameras.length) {
-        for (let index = visible.length; index < slots; index++) {
+    const placeholders = [...grid.querySelectorAll('.empty-slot')];
+    const emptyCount = !spotlight && (layout !== 'auto' || boundedAuto) && state.cameras.length
+        ? slots - visible.length : 0;
+    // Reuse placeholders too: orientation and page changes never reinsert a tile.
+    for (let index = 0; index < emptyCount; index++) {
+        if (!placeholders[index]) {
             const placeholder = document.createElement('div');
             placeholder.className = 'empty-slot';
             placeholder.textContent = 'Empty';
+            const frame = document.createElement('span');
+            frame.className = 'tile-frame';
+            frame.setAttribute('aria-hidden', 'true');
+            placeholder.appendChild(frame);
             grid.appendChild(placeholder);
+            placeholders.push(placeholder);
         }
     }
+    placeholders.forEach((placeholder, index) => { placeholder.hidden = index >= emptyCount; });
     grid.dataset.layout = layout;
+    grid.dataset.scrolling = String(geometry.scrolling);
+    grid.style.setProperty('--grid-columns', String(geometry.columns));
+    grid.style.setProperty('--grid-rows', String(geometry.rows));
     infoTile.hidden = !info;
     infoTile.classList.toggle('spotlight-strip', spotlight);
-    infoTile.style.setProperty('grid-column', layout === 'auto' ? 'auto' : spotlight ? '2' : layout.split('x')[0]);
-    infoTile.style.setProperty('grid-row', layout === 'auto' ? 'auto' : spotlight ? '4' : layout.split('x')[1]);
+    infoTile.style.setProperty('grid-column', layout === 'auto' && !boundedAuto ? 'auto' : String(geometry.columns));
+    infoTile.style.setProperty('grid-row', layout === 'auto' && !boundedAuto ? 'auto' : String(geometry.rows));
     grid.classList.toggle('spotlight-single', spotlight && state.cameras.length === 1 && !info);
-    const autoCount = state.cameras.length + (info ? 1 : 0);
-    grid.dataset.auto = autoCount === 1 ? 'single' : autoCount === 2 ? 'pair'
-        : autoCount <= 4 ? 'quad'
-        : mobile.matches ? 'many' : autoCount <= 6 ? 'six' : autoCount <= 9 ? 'nine' : 'many';
     dashboard.dataset.effectiveLayout = layout;
     grid.hidden = !state.cameras.length;
     find('#empty-state').hidden = Boolean(state.cameras.length);
@@ -1031,6 +1092,14 @@ setupDialog.addEventListener('close', () => {
 });
 rotationSelect.value = String(state.rotationSeconds);
 rotationSelect.addEventListener('change', changeRotationInterval);
+themeSelect.value = initialTheme;
+themeSelect.addEventListener('change', () => {
+    const value = themeValues.includes(themeSelect.value) ? themeSelect.value : 'default';
+    themeSelect.value = value;
+    applyTheme(value);
+    try { localStorage.setItem('kcd.theme', value); } catch { /* Storage can be disabled. */ }
+    announce(`Theme set to ${themeSelect.selectedOptions[0].textContent}.`);
+});
 weatherForm.addEventListener('submit', saveWeather);
 weatherForm.addEventListener('input', () => { weatherFormRevision++; });
 addForm.addEventListener('submit', addCamera);
@@ -1048,6 +1117,8 @@ find('#retry-layout').addEventListener('click', () => {
 });
 layoutButtons.forEach(button => button.addEventListener('click', () => selectLayout(button.dataset.layout)));
 mobile.addEventListener('change', renderPage);
+portraitDisplay.addEventListener('change', renderPage);
+let renderedShape = `${portraitDisplay.matches}|${mobile.matches}`;
 for (const event of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
     document.addEventListener(event, activate, {capture: true, passive: true});
 }
@@ -1112,5 +1183,8 @@ setInterval(() => {
     dailyReload();
     tiles.forEach(tile => tile.updatePlaybackStatus());
     rotateSpotlight();
+    // Safety net: some hosts change the viewport without firing media-query change events.
+    const shape = `${portraitDisplay.matches}|${mobile.matches}`;
+    if (shape !== renderedShape) { renderedShape = shape; renderPage(); }
     updateSummary();
 }, 1000);

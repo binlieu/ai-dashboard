@@ -101,6 +101,10 @@ Open **Setup** in the bottom status bar to manage cameras. With an empty camera 
 centred **Open Setup** button takes you to the same panel. Close the panel with
 **Close** or **Esc**; focus returns to Setup.
 
+**Themes:** in **Setup → Theme → Look**, choose **Default**, **Mission control**,
+**Starship HUD** or **Deep space observatory**. The choice is saved per display
+and applies immediately without interrupting video.
+
 - **Add:** enter the camera's MAC address, with colons, dashes or 12 hexadecimal
   digits without separators. Find it in the Kasa app under Device settings →
   Device info, or on the camera's label. A name is optional. While the server
@@ -136,6 +140,12 @@ active. When there are more cameras than slots, use
 **Previous / Next** or the **Left / Right arrow** keys to page (arrow shortcuts
 are inactive while typing or using Setup). Only the visible page keeps video
 connections open. Removing cameras clamps the page to the remaining range.
+
+**Portrait displays:** monitors at least 700 px wide automatically use fewer columns
+and more rows when mounted vertically. Spotlight places the large camera above a
+2×2 strip; the info tile stays in the last cell. Layout names and saved choices stay
+the same. Controls wrap below the status information when needed and leave the bar
+when idle. Narrower screens keep the existing Auto fallback.
 
 **Spotlight** keeps one camera large on the left and up to four others in a
 vertical strip on the right. Select a strip tile with a click, Enter or Space to
