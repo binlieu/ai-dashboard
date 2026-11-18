@@ -4,6 +4,7 @@ import re
 from urllib.parse import unquote, urlsplit
 
 CAMERA_ID = re.compile(r"cam[1-9][0-9]{0,3}\Z")
+DEVICE_ID = re.compile(r"dev[1-9][0-9]{0,3}\Z")
 
 
 def check_request(method, target, headers, port):
@@ -54,6 +55,16 @@ def _check_request(method, target, headers, port):
             return 200
         if path == "/api/cameras":
             methods = ("GET", "POST")
+        elif path == "/api/devices":
+            methods = ("GET", "POST")
+        elif path.startswith("/api/devices/"):
+            device_path = path[len("/api/devices/"):]
+            if DEVICE_ID.fullmatch(device_path):
+                methods = ("PATCH", "DELETE")
+            elif device_path.endswith("/state") and DEVICE_ID.fullmatch(device_path[:-6]):
+                methods = ("PUT",)
+            else:
+                return 404
         elif path == "/api/layout":
             methods = ("PUT",)
         elif path == "/api/weather":

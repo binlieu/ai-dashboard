@@ -38,6 +38,11 @@ After `data/cameras.json` exists, camera settings in `.env` are ignored.
 `CAMERA_IP` and `CAMERA_IPS` overrides are no longer used: discovery follows each
 stored MAC. The Kasa login and dashboard port continue to come from `.env`.
 
+If a MAC belongs to a non-camera Kasa/TP-Link device, Setup names its kind and
+model in the error when available. Identification sends two small local UDP
+questions to that one device, on ports 9999 and 20002, retrying once if needed
+within 1.5 seconds. Nothing leaves the local network.
+
 ```sh
 ./start.sh --open
 ```
@@ -122,6 +127,11 @@ and applies immediately without interrupting video.
   removing briefly restarts the video engine for all cameras. A single
   “Restarting video…” banner disappears when visible cameras are Live again or
   after ten seconds; the existing players reconnect automatically.
+
+**Plugs and switches:** in Setup, add up to six devices by MAC address, and
+rename or remove them from the same list. Their status-bar buttons show the
+reported state. Press **On** or **Off** to switch the device, or **?** to refresh
+its state. Anyone using this screen can switch the saved devices.
 
 The video area fills the screen above a slim, always-visible status bar with the
 local time, date, and live, offline and connecting counts for the visible cameras.
@@ -217,7 +227,7 @@ For unattended wall displays the page reloads itself once a day between 04:00
 and 05:00 local time, only while the server answers, and not while Setup or a
 fullscreen tile is open.
 
-## Same-origin camera API
+## Same-origin API
 
 The dashboard uses these same-origin endpoints.
 
@@ -227,6 +237,11 @@ The dashboard uses these same-origin endpoints.
 | POST | `/api/cameras` | JSON `{ "mac": "...", "name": "..." }`; name optional. Discover, probe, save and restart; returns 201. |
 | PATCH | `/api/cameras/camN` | JSON `{ "name": "..." }`; rename without restarting. |
 | DELETE | `/api/cameras/camN` | Remove and restart; returns 204. |
+| GET | `/api/devices` | Max 6 and saved plugs/switches with ID, name, MAC and cached `on`, `off` or `unknown` state; no IPs. |
+| POST | `/api/devices` | JSON `{ "mac": "...", "name": "..." }`; name optional. Discover, identify, read and save; returns 201. |
+| PATCH | `/api/devices/devN` | JSON `{ "name": "..." }`; rename a saved plug or switch. |
+| DELETE | `/api/devices/devN` | Remove a saved plug or switch without changing its power state; returns 204. |
+| PUT | `/api/devices/devN/state` | Exactly `{ "on": true }` or `{ "on": false }`; switch and return the reported state with ID and name. |
 | PUT | `/api/layout` | JSON `{ "layout": "2x2" }`; allowed: `auto`, `2x1`, `2x2`, `3x3`, `4x4`, `spotlight`. |
 | GET | `/api/weather` | Settings, cached forecast, and `timezone` (zone name when enabled and known, otherwise `null`), with status `off`, `loading`, `ok` or `unavailable`; never exposes coordinates. |
 | PUT | `/api/weather` | JSON `{ "enabled": true, "place": "Springfield", "units": "f" }`; units `f` or `c`. Resolves enabled places and returns the same shape as GET. |
@@ -238,7 +253,9 @@ Weather requests run independently of that lock; geocoding may take about ten
 seconds. Weather validation errors return 400, `place_not_found` returns 404,
 and `weather_unavailable` returns 502. Forecast reads never wait on the network.
 POST reports `invalid_mac` (400), `duplicate`/`limit` (409), `not_found` (404),
-`auth`/`not_kasa` (422), or `go2rtc` (502). If applying a stream change fails,
+`auth`/`not_kasa` (422), or `go2rtc` (502). A `not_kasa` message names the device
+kind and model when local identification succeeds; otherwise it says the address
+did not answer as a Kasa camera. If applying a stream change fails,
 the store is restored and the previous bridge configuration is applied again.
 Errors return `{ "error": "code", "message": "description" }` without login values.
 
@@ -249,6 +266,17 @@ an open stalled socket is restarted at most once per thirty seconds, after its
 old close handler completes. Snapshot saves a name-based JPEG filename;
 Fullscreen expands the selected tile. Video stays muted because camera G.711
 audio is not carried over MSE. Use a current browser with H.264 MSE support.
+
+### Plugs and switches
+
+The API supports up to six single-outlet Kasa plugs and switches saved by MAC
+address. Control uses local TCP 9999 or KLAP over HTTP port 80 and the existing
+Kasa login in `.env`; credentials and device IPs are never returned by the device
+API or saved with devices. Names and MACs remain in the private state file, and
+the setup API lists MACs. States are polled every 15 seconds, with unknown devices
+retried every 3 seconds. Failed operations report `unknown`; a failed write is
+not automatically repeated. Only connect appliances that are safe to switch
+remotely. Multi-outlet devices are not supported. Device operations do not restart video.
 
 ## Troubleshooting
 

@@ -10,8 +10,10 @@ import threading
 import webbrowser
 
 from .discovery import resolve_cameras, sweep_local_network
+from .devices import DeviceService
 from .envfile import b64, env_get
 from .go2rtc import Go2RTC, Go2RTCError
+from .kasa_control import DeviceClient
 from .server import DashboardApplication, DashboardServer
 from .store import CameraStore, StoreError
 from .weather import WeatherService
@@ -48,7 +50,8 @@ def main(argv=None, repo=None):
             warning=lambda text: print(text, file=sys.stderr))
         bridge = Go2RTC(repo, user, password)
         weather = WeatherService(store)
-        application = DashboardApplication(store, bridge, user, b64(password), weather=weather)
+        devices = DeviceService(store, DeviceClient(user, password))
+        application = DashboardApplication(store, bridge, user, b64(password), weather=weather, devices=devices)
         # Reserve the public port before any camera connection is opened.
         server = DashboardServer(("127.0.0.1", port), application, repo / "www")
         cameras = resolve_cameras(store.snapshot()["cameras"], sweep=sweep_local_network)

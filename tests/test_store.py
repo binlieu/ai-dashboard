@@ -187,3 +187,89 @@ class StoreTests(unittest.TestCase):
                 store.set_weather(dict(WEATHER_DEFAULTS, place='Springfield'))
         self.assertEqual(store.get_weather(), WEATHER_DEFAULTS)
         self.assertEqual(self.path.read_bytes(), original)
+
+    def test_device_mutations_are_atomic_and_do_not_persist_runtime_fields(self):
+        store = CameraStore(self.path, {'CAMERA_MAC': MAC})
+        device = store.add_device('aa:bb:cc:dd:ee:02', 'Porch')
+        before, disk = store.snapshot(), self.path.read_bytes()
+        for action in (lambda: store.add_device('aa:bb:cc:dd:ee:03', 'Fan'),
+                       lambda: store.rename_device(device['id'], 'New'),
+                       lambda: store.remove_device(device['id'])):
+            with patch('app.store.os.replace', side_effect=OSError('synthetic write failure')):
+                with self.assertRaises(OSError):
+                    action()
+            self.assertEqual(store.snapshot(), before)
+            self.assertEqual(self.path.read_bytes(), disk)
+        copy = store.get_devices()
+        copy[0]['name'] = 'Changed outside the store'
+        self.assertEqual(store.get_devices()[0]['name'], 'Porch')
+        self.assertEqual(set(json.loads(disk)['devices'][0]), {'id', 'mac', 'name'})
+
+    def test_device_removal_and_counter_survive_camera_rollback(self):
+        store = CameraStore(self.path)
+        store.add_device('aa:bb:cc:dd:ee:02', 'Porch')
+        previous = store.snapshot()
+        store.add(MAC)
+        store.remove_device('dev1')
+        store.add_device('aa:bb:cc:dd:ee:03', 'Fan')
+        store.restore(previous)
+        self.assertEqual(store.snapshot()['cameras'], [])
+        self.assertEqual(store.get_devices(), [{'id': 'dev2', 'mac': 'aa:bb:cc:dd:ee:03', 'name': 'Fan'}])
+        self.assertEqual(CameraStore(self.path).add_device('aa:bb:cc:dd:ee:04', 'Light')['id'], 'dev3')
+
+    def test_device_load_validation_isolated_from_cameras_and_weather(self):
+        store = CameraStore(self.path, {'CAMERA_MAC': MAC})
+        original = store.snapshot()
+        weather = dict(WEATHER_DEFAULTS, place='Springfield')
+        device = {'id': 'dev1', 'mac': 'aa:bb:cc:dd:ee:02', 'name': 'Porch'}
+        invalid = [
+            {'next_device_id': 2},
+            {'devices': [], 'next_device_id': True},
+            {'devices': [device], 'next_device_id': 2.0},
+            {'devices': [dict(device, name=' ')], 'next_device_id': 2},
+            {'devices': [dict(device, mac=device['mac'].upper())], 'next_device_id': 2},
+            {'devices': [device, dict(device, mac='aa:bb:cc:dd:ee:03')], 'next_device_id': 2},
+        ]
+        for extra in invalid:
+            with self.subTest(extra=extra):
+                self.path.write_text(json.dumps(dict(original, weather=weather, **extra)))
+                warning = Mock()
+                loaded = CameraStore(self.path, warning=warning)
+                self.assertEqual(loaded.snapshot()['cameras'], original['cameras'])
+                self.assertEqual(loaded.get_weather(), weather)
+                self.assertEqual(loaded.get_devices(), [])
+                self.assertIs(type(json.loads(self.path.read_text())['next_device_id']), int)
+                self.assertEqual(CameraStore(self.path).get_devices(), [])
+                warning.assert_called_once()
+                self.assertEqual(list(self.path.parent.glob('*.corrupt-*')), [])
+
+    def test_concurrent_camera_and_device_adds_cannot_share_a_mac(self):
+        store = CameraStore(self.path)
+        def add(device):
+            try:
+                return store.add_device(MAC, 'Light') if device else store.add(MAC, 'Camera')
+            except StoreError as error:
+                return error.code
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(add, (True, False)))
+        self.assertEqual(sum(result == 'duplicate' for result in results), 1)
+        self.assertEqual(len(store.snapshot()['cameras']) + len(store.get_devices()), 1)
+
+    def test_device_id_exhaustion_and_restore_mac_conflicts_preserve_data(self):
+        store = CameraStore(self.path)
+        camera = store.add(MAC)
+        previous = store.snapshot()
+        store.remove(camera['id'])
+        device = store.add_device(MAC, 'Light')
+        with self.assertRaises(StoreError) as error:
+            store.restore(previous)
+        self.assertEqual(error.exception.code, 'duplicate')
+        self.assertEqual(CameraStore(self.path).get_devices(), [device])
+        state = store.snapshot()
+        state['next_device_id'] = 10001
+        self.path.write_text(json.dumps(state))
+        loaded = CameraStore(self.path)
+        self.assertEqual(loaded.get_devices(), [device])
+        with self.assertRaises(StoreError) as error:
+            loaded.add_device('aa:bb:cc:dd:ee:02', 'Next')
+        self.assertEqual((error.exception.code, error.exception.status), ('limit', 409))

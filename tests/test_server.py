@@ -21,7 +21,9 @@ import threading
 import unittest
 from unittest.mock import Mock, patch
 
+from app.devices import DeviceService
 from app.go2rtc import UnixHTTPClient, UnixHTTPConnection
+from app.kasa_control import ControlError
 from app.server import DashboardApplication, DashboardHandler, DashboardServer
 from app.store import CameraStore
 from app.weather import WeatherError, WeatherService
@@ -171,8 +173,9 @@ class ServerTests(unittest.TestCase):
         self.bridge = FakeBridge(self.upstream)
         self.store = CameraStore(self.root/'data/cameras.json', {'CAMERA_MAC': MAC1})
         self.lookup, self.sweep, self.probe = Mock(return_value='192.0.2.12'), Mock(), Mock(return_value='ok')
+        self.identify = Mock(return_value=None)
         self.application = DashboardApplication(self.store, self.bridge, 'dummy@example.com', 'ZHVtbXk=',
-            lookup=self.lookup, sweep=self.sweep, probe=self.probe,
+            lookup=self.lookup, sweep=self.sweep, probe=self.probe, identify=self.identify,
             initial_cameras=[{'id': 'cam1', 'ip': '192.0.2.11'}])
         self.server = DashboardServer(('127.0.0.1', 0), self.application, self.www, bind_and_activate=False)
         self.thread, self.front_sockets, self.front_workers = None, [], []
@@ -296,6 +299,46 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(json.loads(body)['mac'], MAC2)
         self.assertEqual(order, ['probe', 'apply'])
         self.sweep.assert_not_called()
+        self.identify.assert_not_called()
+
+    def test_post_identifies_non_camera_without_changing_state(self):
+        self.probe.return_value = 'unreachable'
+        before = self.store.snapshot(), self.application.ips.copy()
+        for identity, message in (({'kind': 'switch', 'model': 'HS200'},
+                                   'This is a Kasa smart switch (HS200), not a camera.'),
+                                  (None, 'The address did not answer as a Kasa camera.')):
+            with self.subTest(identity=identity):
+                self.identify.reset_mock()
+                self.identify.return_value = identity
+                status, _, body = self.request('POST', '/api/cameras', {'mac': MAC2})
+                self.assertEqual(status, 422)
+                self.assertEqual(json.loads(body), {'error': 'not_kasa', 'message': message})
+                self.identify.assert_called_once_with('192.0.2.12')
+                self.assertEqual((self.store.snapshot(), self.application.ips), before)
+                self.assertEqual(self.bridge.applied, [])
+
+    def test_post_identify_failure_keeps_generic_not_kasa_error(self):
+        self.probe.return_value = 'unreachable'
+        self.identify.side_effect = RuntimeError('synthetic discovery failure')
+        status, _, body = self.request('POST', '/api/cameras', {'mac': MAC2})
+        self.assertEqual(status, 422)
+        self.assertEqual(json.loads(body), {'error': 'not_kasa',
+            'message': 'The address did not answer as a Kasa camera.'})
+        self.identify.assert_called_once_with('192.0.2.12')
+        self.assertEqual(self.bridge.applied, [])
+
+    def test_post_camera_and_auth_paths_do_not_identify(self):
+        for result, expected in (('ok', 201), ('busy', 201), ('auth', 422)):
+            with self.subTest(result=result):
+                self.probe.return_value = result
+                status, _, body = self.request('POST', '/api/cameras', {'mac': MAC2})
+                self.assertEqual(status, expected)
+                self.identify.assert_not_called()
+                if status == 201:
+                    self.application.remove(json.loads(body)['id'])
+        self.lookup.return_value = None
+        self.assertEqual(self.request('POST', '/api/cameras', {'mac': MAC2})[0], 404)
+        self.identify.assert_not_called()
 
     def test_post_errors(self):
         cases = [('invalid_mac', 400, {'mac': 'invalid'}), ('duplicate', 409, {'mac': MAC1})]
@@ -409,6 +452,160 @@ class ServerTests(unittest.TestCase):
         self.assertFalse(worker.is_alive())
         self.assertEqual(results[0][0], 200)
         self.assertEqual(self.bridge.applied, [])
+
+    def device_service(self):
+        client = Mock()
+        client.read.return_value = False
+        client.set.return_value = True
+        service = DeviceService(self.store, client, self.lookup, self.sweep,
+                                Mock(return_value={'kind': 'switch', 'model': 'HS200'}))
+        self.application.devices = service
+        self.addCleanup(service.stop)
+        return service, client
+
+    def test_device_routes_add_rename_switch_and_remove(self):
+        service, client = self.device_service()
+        status, _, body = self.request('GET', '/api/devices')
+        self.assertEqual((status, json.loads(body)), (200, {'devices': [], 'max': 6}))
+        status, _, body = self.request('POST', '/api/devices', {'mac': MAC2, 'name': 'Porch'})
+        self.assertEqual((status, json.loads(body)), (201,
+            {'id': 'dev1', 'name': 'Porch', 'mac': MAC2, 'state': 'off'}))
+        status, _, body = self.request('PATCH', '/api/devices/dev1', {'name': 'Light'})
+        self.assertEqual((status, json.loads(body)['name']), (200, 'Light'))
+        client.set.return_value = False
+        status, _, body = self.request('PUT', '/api/devices/dev1/state', {'on': True})
+        self.assertEqual((status, json.loads(body)), (200, {'id': 'dev1', 'name': 'Light', 'state': 'off'}))
+        client.set.assert_called_once_with('192.0.2.12', True)
+        status, _, body = self.request('GET', '/api/devices')
+        self.assertEqual((status, json.loads(body)), (200, service.settings()))
+        for private in (b'192.0.2.12', b'dummy@example.com', b'ZHVtbXk='):
+            self.assertNotIn(private, body)
+        status, headers, body = self.request('DELETE', '/api/devices/dev1')
+        self.assertEqual((status, headers['Content-Length'], body), (204, '0', b''))
+        self.assertEqual(self.request('DELETE', '/api/devices/dev1')[0], 404)
+        self.assertEqual(self.bridge.applied, [])
+        self.assertEqual(self.upstream.requests, [])
+
+    def test_device_errors_have_public_messages_and_unknown_cached_state(self):
+        service, client = self.device_service()
+        for failure, expected, code in ((ControlError('auth'), 422, 'auth'),
+                                        (ControlError('unsupported'), 422, 'not_device'),
+                                        (RuntimeError('PRIVATE'), 502, 'unreachable')):
+            client.read.side_effect = failure
+            status, _, body = self.request('POST', '/api/devices', {'mac': MAC2})
+            self.assertEqual((status, json.loads(body)['error']), (expected, code))
+            self.assertNotIn(b'PRIVATE', body)
+        client.read.side_effect = None
+        self.request('POST', '/api/devices', {'mac': MAC2})
+        client.set.side_effect = ControlError('auth')
+        status, _, body = self.request('PUT', '/api/devices/dev1/state', {'on': False})
+        self.assertEqual((status, json.loads(body)), (422,
+            {'error': 'auth', 'message': 'The device rejected the Kasa account login.'}))
+        self.assertEqual(service.settings()['devices'][0]['state'], 'unknown')
+        for body in ({'on': 1}, {'on': False, 'extra': True}, {}):
+            status, _, response = self.request('PUT', '/api/devices/dev1/state', body)
+            self.assertEqual((status, json.loads(response)['error']), (400, 'invalid_state'))
+        self.assertEqual(self.request('POST', '/api/devices', {'mac': MAC1})[0], 409)
+        self.assertEqual(self.request('POST', '/api/devices', {'mac': 'bad'})[0], 400)
+        self.assertEqual(self.request('POST', '/api/devices', {'mac': MAC2, 'name': 'x'*5000})[0], 413)
+
+    def test_device_gate_rejects_foreign_writes_before_service_calls(self):
+        service = self.application.devices = Mock()
+        for method, path, body in (('POST', '/api/devices', {'mac': MAC2}),
+                                    ('PATCH', '/api/devices/dev1', {'name': 'Light'}),
+                                    ('PUT', '/api/devices/dev1/state', {'on': True}),
+                                    ('DELETE', '/api/devices/dev1', None)):
+            status, _, _ = self.request(method, path, body, {'Origin': 'http://foreign.example'})
+            self.assertEqual(status, 403)
+        self.assertEqual(service.mock_calls, [])
+
+    def test_encoded_device_state_path_cannot_turn_into_a_delete(self):
+        service, client = self.device_service()
+        self.request('POST', '/api/devices', {'mac': MAC2})
+        status, _, body = self.request('PUT', '/api/devices/dev1/%73tate', {'on': True})
+        self.assertEqual((status, json.loads(body)['state']), (200, 'on'))
+        self.assertEqual(len(service.settings()['devices']), 1)
+        client.set.assert_called_once()
+
+    def test_device_exchange_does_not_block_camera_requests_or_cached_device_reads(self):
+        service, client = self.device_service()
+        self.request('POST', '/api/devices', {'mac': MAC2})
+        entered, release = threading.Event(), threading.Event()
+        results = []
+
+        def set_state(ip, on):
+            entered.set()
+            if not release.wait(3):
+                raise RuntimeError('PRIVATE')
+            return True
+
+        client.set.side_effect = set_state
+        worker = threading.Thread(target=lambda: results.append(
+            self.request('PUT', '/api/devices/dev1/state', {'on': True})), daemon=True)
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(1))
+            self.assertEqual(self.request('PATCH', '/api/cameras/cam1', {'name': 'Front'})[0], 200)
+            self.assertEqual(self.request('GET', '/api/frame.jpeg?src=cam1')[0], 200)
+            self.assertEqual(self.request('GET', '/api/devices')[0], 200)
+        finally:
+            release.set()
+            worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(results[0][0], 200)
+        client.set.side_effect = None
+        done = threading.Event()
+        with self.application.lock:
+            independent = threading.Thread(target=lambda: (
+                self.request('PUT', '/api/devices/dev1/state', {'on': False}), done.set()), daemon=True)
+            independent.start()
+            self.assertTrue(done.wait(1), 'Device request took the camera application lock')
+        independent.join(2)
+
+    def test_device_service_lifecycle_and_absent_or_failed_service(self):
+        service = self.application.devices = Mock()
+        with patch('app.server.threading.Thread'):
+            self.application.start_background()
+            self.application.stop_background()
+        service.start.assert_called_once_with()
+        service.stop.assert_called_once_with()
+        service.settings.side_effect = RuntimeError('PRIVATE')
+        status, _, body = self.request('GET', '/api/devices')
+        self.assertEqual((status, json.loads(body)), (502,
+            {'error': 'unreachable', 'message': 'The device did not answer.'}))
+        self.application.devices = None
+        self.assertEqual(self.request('GET', '/api/devices')[0], 502)
+
+    def test_camera_apply_rollback_preserves_a_device_saved_during_bridge_io(self):
+        service, _ = self.device_service()
+        entered, release = threading.Event(), threading.Event()
+        results = []
+        original = self.bridge.apply
+
+        def apply(cameras):
+            if len(cameras) > 1:
+                entered.set()
+                if not release.wait(3):
+                    raise RuntimeError('Test did not release the fake bridge')
+                raise RuntimeError('Synthetic apply failure')
+            original(cameras)
+
+        self.bridge.apply = apply
+        camera_mac = 'aa:bb:cc:dd:ee:03'
+        worker = threading.Thread(target=lambda: results.append(
+            self.request('POST', '/api/cameras', {'mac': camera_mac})), daemon=True)
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(1))
+            self.assertEqual(self.request('POST', '/api/devices', {'mac': MAC2})[0], 201)
+        finally:
+            release.set()
+            worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(results[0][0], 502)
+        self.assertEqual([camera['id'] for camera in self.store.snapshot()['cameras']], ['cam1'])
+        self.assertEqual(service.settings()['devices'][0]['id'], 'dev1')
+        self.assertEqual(CameraStore(self.root/'data/cameras.json').get_devices(), self.store.get_devices())
 
     def test_delete_failure_restores_camera(self):
         self.bridge.failures = 1
@@ -547,6 +744,10 @@ class ServerTests(unittest.TestCase):
 
 class MainTests(unittest.TestCase):
     def setUp(self):
+        application = patch('app.__main__.DashboardApplication', side_effect=lambda *args, **kwargs:
+            DashboardApplication(*args, identify=Mock(return_value=None), **kwargs))
+        application.start()
+        self.addCleanup(application.stop)
         self.directory = tempfile.TemporaryDirectory(prefix='kcd-main-', dir='/tmp')
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
@@ -560,6 +761,8 @@ class MainTests(unittest.TestCase):
         event.is_set.return_value = False
         with patch('app.__main__.Go2RTC') as bridge, patch('app.__main__.DashboardServer') as server, \
                 patch('app.__main__.WeatherService') as weather, \
+                patch('app.__main__.DeviceClient') as device_client, \
+                patch('app.__main__.DeviceService') as devices, \
                 patch('app.__main__.threading.Event', return_value=event), patch('app.__main__.threading.Thread') as thread, \
                 patch('app.__main__.signal.signal'), patch('app.__main__.webbrowser.open') as browser, \
                 patch('sys.stdout', output):
@@ -568,6 +771,10 @@ class MainTests(unittest.TestCase):
             bridge.return_value.stop.assert_called_once()
             weather.return_value.start.assert_called_once()
             weather.return_value.stop.assert_called_once()
+            device_client.assert_called_once_with('dummy@example.com', 'synthetic-password')
+            self.assertIs(devices.call_args[0][1], device_client.return_value)
+            devices.return_value.start.assert_called_once()
+            devices.return_value.stop.assert_called_once()
             server.return_value.shutdown.assert_called_once()
             server.return_value.server_close.assert_called_once()
             thread.return_value.start.assert_called()

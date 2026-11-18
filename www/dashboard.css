@@ -190,8 +190,51 @@ fieldset:disabled input {
     color: var(--connecting);
 }
 
-#layout-message:empty {
+#layout-message:empty, #device-message:empty {
     display: none;
+}
+
+#device-message {
+    min-width: 0;
+    color: var(--offline);
+    overflow-wrap: anywhere;
+}
+
+#device-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.device-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35em;
+    max-width: 100%;
+    white-space: nowrap;
+}
+
+.device-button-name {
+    min-width: 0;
+    max-width: 14ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.device-state {
+    flex: none;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.device-button[data-state="on"], .device-state[data-state="on"] {
+    color: var(--live);
+}
+
+.device-button[data-state="unknown"], .device-state[data-state="unknown"] {
+    color: var(--device-unknown, var(--connecting));
 }
 
 .layout-options {
@@ -986,6 +1029,7 @@ video-stream .info {
     --selected: #3b2c17;
     --live: #81e3a9;
     --connecting: #7fb8ff;
+    --device-unknown: var(--accent);
     --offline: #ff9292;
     --scrim: #101821f2;
     --backdrop: #05080dcc;

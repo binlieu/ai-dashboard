@@ -32,6 +32,11 @@ const rotationSelect = find('#rotation-interval');
 const themeSelect = find('#theme-select');
 const infoTile = find('#info-tile');
 const weatherForm = find('#weather-form');
+const deviceControls = find('#device-controls');
+const deviceList = find('#setup-device-list');
+const deviceForm = find('#add-device-form');
+const deviceMac = find('#device-mac');
+const deviceName = find('#device-name');
 const rotationValues = ['0', '10', '30', '60', '300'];
 const layoutButtons = [...document.querySelectorAll('.layout-options button')];
 const mobile = matchMedia('(max-width: 699px)');
@@ -40,6 +45,16 @@ dashboard.dataset.orientation = portraitDisplay.matches ? 'portrait' : 'landscap
 const layouts = ['auto', '2x1', '2x2', '3x3', '4x4', 'spotlight'];
 const tiles = new Map();
 const rows = new Map();
+const deviceViews = new Map();
+const deviceStates = {on: 'On', off: 'Off', unknown: 'Unknown'};
+let devices = [];
+let devicesSupported = null;
+let deviceMax = 6;
+let deviceSetupBusy = false;
+let deviceSetupRevision = 0;
+let deviceRead = null;
+let nextDeviceRead = 0;
+let deviceNoticeUntil = 0;
 const state = {
     cameras: [], max: 16, loaded: false, layout: 'auto', page: 0, pageCount: 1,
     visible: [], busy: false, videoChangePending: false, restartUntil: 0,
@@ -799,6 +814,301 @@ function placeNode(parent, node, index) {
     if (parent.children[index] !== node) parent.insertBefore(node, parent.children[index] || null);
 }
 
+function validDevice(device) {
+    return device && typeof device.id === 'string' && /^dev[1-9][0-9]{0,3}$/.test(device.id) &&
+        typeof device.name === 'string' && typeof device.mac === 'string' && validDeviceState(device.state);
+}
+
+function validDeviceState(value) {
+    return value === 'on' || value === 'off' || value === 'unknown';
+}
+
+class DeviceView {
+    constructor(device) {
+        this.node = find('#setup-device-template').content.firstElementChild.cloneNode(true);
+        this.renameForm = this.node.querySelector('.rename-form');
+        this.input = this.node.querySelector('.rename-input');
+        this.confirmation = this.node.querySelector('.remove-confirmation');
+        this.actions = this.node.querySelector('.row-actions');
+        this.error = this.node.querySelector('.row-error');
+        this.renameButton = this.node.querySelector('.rename-device');
+        this.removeButton = this.node.querySelector('.remove-device');
+        this.busy = false;
+        this.writing = false;
+
+        this.renameButton.addEventListener('click', () => this.showAction('rename'));
+        this.removeButton.addEventListener('click', () => this.showAction('remove'));
+        this.node.querySelector('.cancel-name').addEventListener('click', () => this.cancel(this.renameButton));
+        this.node.querySelector('.cancel-remove').addEventListener('click', () => this.cancel(this.removeButton));
+        this.renameForm.addEventListener('submit', event => this.rename(event));
+        this.node.querySelector('.confirm-remove').addEventListener('click', () => this.remove());
+
+        this.button = document.createElement('button');
+        this.button.type = 'button';
+        this.button.className = 'device-button';
+        this.buttonName = document.createElement('span');
+        this.buttonName.className = 'device-button-name';
+        this.buttonState = document.createElement('span');
+        this.button.append(this.buttonName, this.buttonState);
+        this.button.addEventListener('click', () => this.toggle());
+        this.update(device);
+    }
+
+    update(device) {
+        this.device = device;
+        const {name, mac, state: reported} = device;
+        this.node.querySelector('.row-name').textContent = name;
+        this.node.querySelector('.row-mac').textContent = mac;
+        this.node.querySelector('.remove-question').textContent = `Remove ${name}?`;
+        this.confirmation.setAttribute('aria-label', `Remove ${name}?`);
+        this.input.setAttribute('aria-label', `New name for ${name}`);
+        this.renameButton.setAttribute('aria-label', `Rename ${name}`);
+        this.removeButton.setAttribute('aria-label', `Remove ${name}`);
+        const label = this.node.querySelector('.device-state');
+        label.textContent = deviceStates[reported];
+        label.dataset.state = reported;
+
+        this.button.title = name;
+        this.button.dataset.state = reported;
+        this.button.setAttribute('aria-pressed', reported === 'unknown' ? 'mixed' : String(reported === 'on'));
+        if (reported === 'unknown') this.button.setAttribute('aria-label', `${name}, state unknown. Refresh state`);
+        else this.button.removeAttribute('aria-label');
+        this.buttonName.textContent = name;
+        this.buttonState.textContent = ` · ${reported === 'unknown' ? '?' : deviceStates[reported]}`;
+    }
+
+    showAction(action) {
+        this.error.textContent = '';
+        this.actions.hidden = true;
+        this.renameForm.hidden = action !== 'rename';
+        this.confirmation.hidden = action !== 'remove';
+        if (action === 'rename') {
+            this.input.value = this.device.name;
+            this.input.focus();
+            this.input.select();
+        } else this.node.querySelector('.cancel-remove').focus();
+    }
+
+    cancel(button) {
+        this.renameForm.hidden = true;
+        this.confirmation.hidden = true;
+        this.actions.hidden = false;
+        this.error.textContent = '';
+        if (setupDialog.open) button.focus();
+    }
+
+    async rename(event) {
+        event.preventDefault();
+        if (deviceSetupBusy) return;
+        const name = this.input.value.trim();
+        if (!name || [...name].length > 40) {
+            this.error.textContent = 'Enter a name with 1–40 characters.';
+            this.input.focus();
+            return;
+        }
+        const {id} = this.device;
+        const saved = await saveDevice(`api/devices/${id}`, {method: 'PATCH', body: {name}}, this.error, device => {
+            if (!validDevice(device) || device.id !== id) throw new ApiError('Device response is unavailable.');
+            reconcileDevices(devices.map(item => item.id === id ? {...item, name: device.name} : item));
+            announce(`Renamed to ${device.name}.`);
+        });
+        if (saved) this.cancel(this.renameButton);
+        else if (setupDialog.open) this.input.focus();
+    }
+
+    async remove() {
+        if (deviceSetupBusy) return;
+        const {id, name} = this.device;
+        const saved = await saveDevice(`api/devices/${id}`, {method: 'DELETE'}, this.error, () => {
+            reconcileDevices(devices.filter(device => device.id !== id));
+            announce(`${name} removed.`);
+        });
+        if (setupDialog.open) {
+            if (!saved) this.node.querySelector('.confirm-remove').focus();
+            else if (find('#add-device-fields').disabled) find('#close-setup').focus();
+            else deviceMac.focus();
+        }
+    }
+
+    async toggle() {
+        if (this.busy || !devicesSupported) return;
+        const {id, state: reported} = this.device;
+        const hadFocus = document.activeElement === this.button;
+        this.busy = true;
+        this.writing = reported !== 'unknown';
+        this.button.disabled = true;
+        this.button.setAttribute('aria-busy', 'true');
+        try {
+            if (!this.writing) {
+                const error = await loadDevices();
+                if (error) throw error;
+                return;
+            }
+            // An overlapping list response may have captured the state before the write.
+            deviceRead?.writing.add(id);
+            const result = await request(`api/devices/${id}/state`, {method: 'PUT', body: {on: reported === 'off'}});
+            if (result?.id !== id || !validDeviceState(result.state)) throw new ApiError('Device state is unavailable.');
+            if (deviceViews.get(id) === this) this.setState(result.state);
+        } catch (error) {
+            if (deviceViews.get(id) === this) {
+                this.setState('unknown');
+                find('#device-message').textContent = error.message;
+                deviceNoticeUntil = performance.now() + 6000;
+            }
+        } finally {
+            this.busy = this.writing = false;
+            this.button.disabled = false;
+            this.button.removeAttribute('aria-busy');
+            if (hadFocus && this.button.isConnected && !setupDialog.open && document.activeElement === document.body) {
+                activate();
+                this.button.focus();
+            }
+            if (devices.some(device => device.state === 'unknown')) {
+                nextDeviceRead = Math.min(nextDeviceRead, performance.now() + 3000);
+            }
+        }
+    }
+
+    setState(reported) {
+        this.device.state = reported;
+        this.update(this.device);
+    }
+}
+
+function reconcileDevices(list) {
+    const ids = new Set(list.map(device => device.id));
+    for (const [id, view] of deviceViews) {
+        if (!ids.has(id)) {
+            view.node.remove();
+            view.button.remove();
+            deviceViews.delete(id);
+        }
+    }
+    devices = list;
+    devices.forEach((device, index) => {
+        let view = deviceViews.get(device.id);
+        if (view) view.update(device);
+        else {
+            view = new DeviceView(device);
+            deviceViews.set(device.id, view);
+        }
+        placeNode(deviceList, view.node, index);
+        placeNode(deviceControls, view.button, index);
+    });
+    deviceControls.hidden = !devices.length;
+    updateDeviceSetup();
+}
+
+function updateDeviceSetup() {
+    find('#setup-devices').hidden = devicesSupported !== true;
+    find('#device-count').textContent = `${devices.length} of ${deviceMax}`;
+    find('#add-device-fields').disabled = deviceSetupBusy || devicesSupported !== true || devices.length >= deviceMax;
+    find('#manage-devices').disabled = deviceSetupBusy;
+}
+
+function loadDevices() {
+    if (devicesSupported === false) return Promise.resolve(null);
+    if (deviceRead) return deviceRead.promise;
+    const revision = deviceSetupRevision;
+    const reading = {writing: new Set(devices.filter(device => deviceViews.get(device.id).writing).map(device => device.id))};
+    deviceRead = reading;
+    reading.promise = (async () => {
+        try {
+            const data = await request('api/devices');
+            if (revision !== deviceSetupRevision) return null;
+            if (!data || !Array.isArray(data.devices) || !Number.isInteger(data.max) || data.max < 1 ||
+                data.devices.length > data.max || !data.devices.every(validDevice) ||
+                new Set(data.devices.map(device => device.id)).size !== data.devices.length) {
+                throw new ApiError('Device list is unavailable.');
+            }
+            devicesSupported = true;
+            deviceMax = data.max;
+            reconcileDevices(data.devices.map(device => {
+                const current = deviceViews.get(device.id)?.device;
+                return current && reading.writing.has(device.id) ? {...device, state: current.state} : device;
+            }));
+            return null;
+        } catch (error) {
+            if (revision !== deviceSetupRevision) return null;
+            if (error.status === 404) {
+                devicesSupported = false;
+                reconcileDevices([]);
+                return null;
+            }
+            for (const [id, view] of deviceViews) {
+                if (!reading.writing.has(id)) view.setState('unknown');
+            }
+            return error;
+        } finally {
+            deviceRead = null;
+            nextDeviceRead = performance.now() + (devices.some(device => device.state === 'unknown') ? 3000 : 15000);
+        }
+    })();
+    return reading.promise;
+}
+
+async function saveDevice(path, options, errorNode, saved) {
+    deviceSetupBusy = true;
+    updateDeviceSetup();
+    errorNode.textContent = '';
+    announce('');
+    try {
+        const result = await request(path, options);
+        deviceSetupRevision++;
+        saved(result);
+        if (deviceRead) await deviceRead.promise;
+        await loadDevices();
+        return true;
+    } catch (error) {
+        errorNode.textContent = error.message;
+        nextDeviceRead = 0;
+        return false;
+    } finally {
+        deviceSetupBusy = false;
+        updateDeviceSetup();
+    }
+}
+
+async function addDevice(event) {
+    event.preventDefault();
+    if (find('#add-device-fields').disabled) return;
+    const errorNode = find('#add-device-error');
+    const mac = normalizeMac(deviceMac.value);
+    if (!mac) {
+        errorNode.textContent = 'Enter a valid MAC address with six hexadecimal octets.';
+        deviceMac.setAttribute('aria-invalid', 'true');
+        deviceMac.focus();
+        return;
+    }
+    const name = deviceName.value.trim();
+    const progress = find('#add-device-progress');
+    progress.hidden = false;
+    deviceForm.setAttribute('aria-busy', 'true');
+    await saveDevice('api/devices', {method: 'POST', body: name ? {mac, name} : {mac}}, errorNode, device => {
+        if (!validDevice(device)) throw new ApiError('Device response is unavailable.');
+        reconcileDevices([...devices.filter(item => item.id !== device.id), device]);
+        deviceForm.reset();
+        deviceMac.removeAttribute('aria-invalid');
+        announce(`${device.name} added.`);
+    });
+    deviceForm.removeAttribute('aria-busy');
+    progress.hidden = true;
+    if (setupDialog.open && [document.body, setupDialog, deviceMac, deviceName].includes(document.activeElement)) {
+        (find('#add-device-fields').disabled ? find('#close-setup') : deviceMac).focus();
+    }
+}
+
+function deviceTick() {
+    const now = performance.now();
+    if (deviceNoticeUntil && now >= deviceNoticeUntil) {
+        deviceNoticeUntil = 0;
+        find('#device-message').textContent = '';
+    }
+    if (devicesSupported === false || deviceSetupBusy || now < nextDeviceRead) return;
+    if (devices.length && devices.every(device => deviceViews.get(device.id).writing)) return;
+    loadDevices();
+}
+
 function reconcile(cameras) {
     const ids = new Set(cameras.map(camera => camera.id));
     for (const [id, tile] of tiles) {
@@ -1148,6 +1458,11 @@ themeSelect.addEventListener('change', () => {
 weatherForm.addEventListener('submit', saveWeather);
 weatherForm.addEventListener('input', () => { weatherFormRevision++; });
 addForm.addEventListener('submit', addCamera);
+deviceForm.addEventListener('submit', addDevice);
+deviceMac.addEventListener('input', () => {
+    deviceMac.removeAttribute('aria-invalid');
+    find('#add-device-error').textContent = '';
+});
 macInput.addEventListener('input', () => {
     find('#mac-error').textContent = '';
     macInput.removeAttribute('aria-invalid');
@@ -1178,7 +1493,7 @@ statusBar.addEventListener('focusin', updateActivity);
 statusBar.addEventListener('focusout', () => queueMicrotask(updateActivity));
 document.addEventListener('keydown', event => {
     if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || setupDialog.open ||
-        (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]'))) return;
+        (event.target instanceof Element && event.target.closest('input, textarea, select, .device-button, [contenteditable]'))) return;
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
         if (state.pageCount <= 1) return;
         event.preventDefault();
@@ -1222,11 +1537,13 @@ function dailyReload() {
 
 updateClock();
 weatherTick();
+deviceTick();
 updateActivity();
 loadCameras();
 setInterval(() => {
     updateClock();
     weatherTick();
+    deviceTick();
     dailyReload();
     tiles.forEach(tile => tile.updatePlaybackStatus());
     rotateSpotlight();
