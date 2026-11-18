@@ -141,10 +141,10 @@ first appearing if never live). Cameras missing from the network show **not foun
 and hold no video connection. Server, restart and layout-save messages remain
 visible in the status bar.
 
-Paging, layout and Setup controls fade out after four seconds without interaction.
-Move the pointer, click, scroll, touch, or press a key to reveal them. Setup, focus
-inside the status bar, or a pointer over the bar keeps controls visible. Empty
-camera lists and camera-list failures also keep controls visible. Idle displays
+The status bar and its controls (paging, plugs and switches, layout, Setup) stay
+visible at all times. The Snapshot and Fullscreen buttons on each tile fade out
+after four seconds without interaction; move the pointer, click, scroll, touch, or
+press a key to reveal them. Idle displays
 hide the cursor over video and hide **Empty** labels; reduced-motion preferences
 disable the fade.
 
@@ -159,8 +159,7 @@ connections open. Removing cameras clamps the page to the remaining range.
 **Portrait displays:** monitors at least 700 px wide automatically use fewer columns
 and more rows when mounted vertically. Spotlight places the large camera above a
 2×2 strip; the info tile stays in the last cell. Layout names and saved choices stay
-the same. Controls wrap below the status information when needed and leave the bar
-when idle. Narrower screens keep the existing Auto fallback.
+the same. Controls wrap below the status information when needed. Narrower screens keep the existing Auto fallback.
 
 **Spotlight** keeps one camera large on the left and up to four others in a
 vertical strip on the right. Select a strip tile with a click, Enter or Space to

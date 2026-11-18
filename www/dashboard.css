@@ -502,8 +502,8 @@ video-stream .info {
     transition: opacity 160ms ease, visibility 0s;
 }
 
-/* Visibility removes idle controls from keyboard navigation after the fade. */
-.dashboard[data-idle="true"] .status-controls,
+/* The status bar stays visible; only per-tile controls fade when idle.
+   Visibility removes idle controls from keyboard navigation after the fade. */
 .dashboard[data-idle="true"] .controls,
 .dashboard[data-idle="true"] .spotlight-select {
     opacity: 0;
