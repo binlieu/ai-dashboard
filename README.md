@@ -38,6 +38,11 @@ After `data/cameras.json` exists, camera settings in `.env` are ignored.
 `CAMERA_IP` and `CAMERA_IPS` overrides are no longer used: discovery follows each
 stored MAC. The Kasa login and dashboard port continue to come from `.env`.
 
+If a MAC belongs to a non-camera Kasa/TP-Link device, Setup names its kind and
+model in the error when available. Identification sends two small local UDP
+questions to that one device, on ports 9999 and 20002, retrying once if needed
+within 1.5 seconds. Nothing leaves the local network.
+
 ```sh
 ./start.sh --open
 ```
@@ -238,7 +243,9 @@ Weather requests run independently of that lock; geocoding may take about ten
 seconds. Weather validation errors return 400, `place_not_found` returns 404,
 and `weather_unavailable` returns 502. Forecast reads never wait on the network.
 POST reports `invalid_mac` (400), `duplicate`/`limit` (409), `not_found` (404),
-`auth`/`not_kasa` (422), or `go2rtc` (502). If applying a stream change fails,
+`auth`/`not_kasa` (422), or `go2rtc` (502). A `not_kasa` message names the device
+kind and model when local identification succeeds; otherwise it says the address
+did not answer as a Kasa camera. If applying a stream change fails,
 the store is restored and the previous bridge configuration is applied again.
 Errors return `{ "error": "code", "message": "description" }` without login values.
 

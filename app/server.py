@@ -15,6 +15,7 @@ from urllib.parse import unquote, urlsplit
 
 from .discovery import ip_for_mac, sweep_local_network, valid_ip
 from .go2rtc import MAX_FRAME, probe_camera
+from .identify import describe, identify_device
 from .security import check_request
 from .store import MAX_CAMERAS, StoreError
 from .weather import WeatherError, WeatherService
@@ -26,11 +27,13 @@ CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; c
 
 class DashboardApplication:
     def __init__(self, store, bridge, user, password_b64, lookup=ip_for_mac,
-                 sweep=sweep_local_network, probe=probe_camera, initial_cameras=None, weather=None):
+                 sweep=sweep_local_network, probe=probe_camera, initial_cameras=None, weather=None,
+                 identify=identify_device):
         self.store, self.bridge = store, bridge
         self.weather = weather if weather is not None else WeatherService(store)
         self._user, self._password_b64 = user, password_b64
         self.lookup, self.sweep, self.probe = lookup, sweep, probe
+        self.identify = identify
         self.lock = threading.RLock()
         self.ips = {camera["id"]: valid_ip(camera.get("ip")) for camera in (initial_cameras or [])}
         self._stop = threading.Event()
@@ -80,7 +83,11 @@ class DashboardApplication:
             if result == "auth":
                 raise StoreError("auth", "The camera rejected the Kasa account login.", 422)
             if result not in ("ok", "busy"):
-                raise StoreError("not_kasa", "The address did not answer as a Kasa camera.", 422)
+                try:
+                    identity = self.identify(ip)
+                except Exception:
+                    identity = None
+                raise StoreError("not_kasa", describe(identity), 422)
             previous, previous_ips = self.store.snapshot(), self.ips.copy()
             camera = self.store.add(candidate["mac"], candidate["name"])
             self.ips[camera["id"]] = ip

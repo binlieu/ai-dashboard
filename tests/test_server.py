@@ -171,8 +171,9 @@ class ServerTests(unittest.TestCase):
         self.bridge = FakeBridge(self.upstream)
         self.store = CameraStore(self.root/'data/cameras.json', {'CAMERA_MAC': MAC1})
         self.lookup, self.sweep, self.probe = Mock(return_value='192.0.2.12'), Mock(), Mock(return_value='ok')
+        self.identify = Mock(return_value=None)
         self.application = DashboardApplication(self.store, self.bridge, 'dummy@example.com', 'ZHVtbXk=',
-            lookup=self.lookup, sweep=self.sweep, probe=self.probe,
+            lookup=self.lookup, sweep=self.sweep, probe=self.probe, identify=self.identify,
             initial_cameras=[{'id': 'cam1', 'ip': '192.0.2.11'}])
         self.server = DashboardServer(('127.0.0.1', 0), self.application, self.www, bind_and_activate=False)
         self.thread, self.front_sockets, self.front_workers = None, [], []
@@ -296,6 +297,46 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(json.loads(body)['mac'], MAC2)
         self.assertEqual(order, ['probe', 'apply'])
         self.sweep.assert_not_called()
+        self.identify.assert_not_called()
+
+    def test_post_identifies_non_camera_without_changing_state(self):
+        self.probe.return_value = 'unreachable'
+        before = self.store.snapshot(), self.application.ips.copy()
+        for identity, message in (({'kind': 'switch', 'model': 'HS200'},
+                                   'This is a Kasa smart switch (HS200), not a camera.'),
+                                  (None, 'The address did not answer as a Kasa camera.')):
+            with self.subTest(identity=identity):
+                self.identify.reset_mock()
+                self.identify.return_value = identity
+                status, _, body = self.request('POST', '/api/cameras', {'mac': MAC2})
+                self.assertEqual(status, 422)
+                self.assertEqual(json.loads(body), {'error': 'not_kasa', 'message': message})
+                self.identify.assert_called_once_with('192.0.2.12')
+                self.assertEqual((self.store.snapshot(), self.application.ips), before)
+                self.assertEqual(self.bridge.applied, [])
+
+    def test_post_identify_failure_keeps_generic_not_kasa_error(self):
+        self.probe.return_value = 'unreachable'
+        self.identify.side_effect = RuntimeError('synthetic discovery failure')
+        status, _, body = self.request('POST', '/api/cameras', {'mac': MAC2})
+        self.assertEqual(status, 422)
+        self.assertEqual(json.loads(body), {'error': 'not_kasa',
+            'message': 'The address did not answer as a Kasa camera.'})
+        self.identify.assert_called_once_with('192.0.2.12')
+        self.assertEqual(self.bridge.applied, [])
+
+    def test_post_camera_and_auth_paths_do_not_identify(self):
+        for result, expected in (('ok', 201), ('busy', 201), ('auth', 422)):
+            with self.subTest(result=result):
+                self.probe.return_value = result
+                status, _, body = self.request('POST', '/api/cameras', {'mac': MAC2})
+                self.assertEqual(status, expected)
+                self.identify.assert_not_called()
+                if status == 201:
+                    self.application.remove(json.loads(body)['id'])
+        self.lookup.return_value = None
+        self.assertEqual(self.request('POST', '/api/cameras', {'mac': MAC2})[0], 404)
+        self.identify.assert_not_called()
 
     def test_post_errors(self):
         cases = [('invalid_mac', 400, {'mac': 'invalid'}), ('duplicate', 409, {'mac': MAC1})]
@@ -547,6 +588,10 @@ class ServerTests(unittest.TestCase):
 
 class MainTests(unittest.TestCase):
     def setUp(self):
+        application = patch('app.__main__.DashboardApplication', side_effect=lambda *args, **kwargs:
+            DashboardApplication(*args, identify=Mock(return_value=None), **kwargs))
+        application.start()
+        self.addCleanup(application.stop)
         self.directory = tempfile.TemporaryDirectory(prefix='kcd-main-', dir='/tmp')
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
