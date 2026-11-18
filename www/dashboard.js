@@ -67,6 +67,8 @@ let nextWeatherAt = 0;
 let weatherPollUntil = 0;
 let infoMinute = '';
 let infoDay = '';
+const timezoneFormatters = new Map();
+let displayFormatters = null;
 
 function readSpotlight() {
     try { return localStorage.getItem('kcd.spotlight'); } catch { return null; }
@@ -207,8 +209,40 @@ function weatherIcon(code, isDay = true) {
     return svg;
 }
 
-function localDate(now) {
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+function weatherTimeFormatters(data) {
+    const timeZone = data.enabled && typeof data.timezone === 'string' ? data.timezone : null;
+    if (timeZone === null) return null;
+    if (!timezoneFormatters.has(timeZone)) {
+        try {
+            timezoneFormatters.set(timeZone, {
+                parts: new Intl.DateTimeFormat('en-US', {timeZone, calendar: 'gregory', numberingSystem: 'latn',
+                    year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', hourCycle: 'h23'}),
+                statusTime: new Intl.DateTimeFormat([], {timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23'}),
+                statusDate: new Intl.DateTimeFormat([], {timeZone, weekday: 'short', day: 'numeric', month: 'short'}),
+                infoTime: new Intl.DateTimeFormat([], {timeZone, hour: 'numeric', minute: '2-digit'}),
+                infoDate: new Intl.DateTimeFormat([], {timeZone, weekday: 'long', month: 'long', day: 'numeric'}),
+            });
+        } catch {
+            timezoneFormatters.set(timeZone, null);
+        }
+    }
+    return timezoneFormatters.get(timeZone);
+}
+
+function displayTimeParts(now) {
+    if (!displayFormatters) {
+        return {year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate(),
+            hour: now.getHours(), minute: now.getMinutes()};
+    }
+    const parts = {};
+    for (const part of displayFormatters.parts.formatToParts(now)) {
+        if (['year', 'month', 'day', 'hour', 'minute'].includes(part.type)) parts[part.type] = Number(part.value);
+    }
+    return parts;
+}
+
+function displayDate(parts) {
+    return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
 }
 
 function renderWeather() {
@@ -226,7 +260,7 @@ function renderWeather() {
     find('#info-details').textContent = `Feels ${current.feels}° · Wind ${current.wind} ${weatherData.units === 'c' ? 'km/h' : 'mph'}`;
     find('#info-place').textContent = weatherData.name;
     find('#info-place').title = weatherData.name;
-    const today = localDate(new Date());
+    const today = displayDate(displayTimeParts(new Date()));
     const days = forecast.days.filter(day => day.date >= today).slice(0, 5).map(day => {
         const node = document.createElement('div');
         node.className = 'forecast-day';
@@ -248,7 +282,9 @@ function acceptWeather(data) {
     if (!data || typeof data.enabled !== 'boolean' || !['f', 'c'].includes(data.units) ||
         typeof data.place !== 'string' || typeof data.name !== 'string' ||
         !['off', 'loading', 'ok', 'unavailable'].includes(data.status)) throw new ApiError('Weather is unavailable.');
+    const previousFormatters = displayFormatters;
     weatherData = data;
+    displayFormatters = weatherTimeFormatters(data);
     const changed = state.weatherEnabled !== data.enabled;
     state.weatherEnabled = data.enabled;
     if (changed) renderPage();
@@ -260,6 +296,12 @@ function acceptWeather(data) {
     } else {
         weatherPollUntil = 0;
         nextWeatherAt = now + 300000;
+    }
+    if (displayFormatters !== previousFormatters) {
+        infoMinute = '';
+        infoDay = '';
+        updateClock();
+        weatherTick();
     }
 }
 
@@ -341,17 +383,20 @@ async function saveWeather(event) {
 
 function weatherTick() {
     const now = new Date();
-    const minute = `${localDate(now)}:${now.getHours()}:${now.getMinutes()}`;
+    const parts = displayTimeParts(now);
+    const day = displayDate(parts);
+    const minute = `${day}:${parts.hour}:${parts.minute}`;
     if (minute !== infoMinute) {
         infoMinute = minute;
         find('#info-clock').dateTime = now.toISOString();
-        find('#info-clock').textContent = now.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+        find('#info-clock').textContent = displayFormatters ? displayFormatters.infoTime.format(now)
+            : now.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
     }
-    const day = localDate(now);
     if (day !== infoDay) {
         infoDay = day;
         find('#info-date').dateTime = day;
-        find('#info-date').textContent = now.toLocaleDateString([], {weekday: 'long', month: 'long', day: 'numeric'});
+        find('#info-date').textContent = displayFormatters ? displayFormatters.infoDate.format(now)
+            : now.toLocaleDateString([], {weekday: 'long', month: 'long', day: 'numeric'});
         renderWeather();
     }
     if (weatherData?.forecast && now.getTime() / 1000 - weatherData.forecast.updated > 3 * 3600 && !find('#info-weather').hidden) renderWeather();
@@ -1150,9 +1195,11 @@ document.addEventListener('fullscreenchange', () => tiles.forEach(tile => tile.u
 function updateClock() {
     const now = new Date();
     clock.dateTime = now.toISOString();
-    clock.textContent = now.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hourCycle: 'h23'});
-    date.dateTime = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    date.textContent = now.toLocaleDateString([], {weekday: 'short', day: 'numeric', month: 'short'});
+    clock.textContent = displayFormatters ? displayFormatters.statusTime.format(now)
+        : now.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hourCycle: 'h23'});
+    date.dateTime = displayDate(displayTimeParts(now));
+    date.textContent = displayFormatters ? displayFormatters.statusDate.format(now)
+        : now.toLocaleDateString([], {weekday: 'short', day: 'numeric', month: 'short'});
 }
 
 // Unattended wall displays: reload once a day, between 04:00 and 05:00 local time.

@@ -170,6 +170,8 @@ The tile shows a large local clock and date, current conditions, feels-like
 temperature, wind, and up to five forecast days with rain chances of at least 20%.
 Small tiles hide forecast days that do not fit. The clock continues to work while
 weather loads or is unavailable.
+Once a forecast arrives, both clocks and dates follow the weather place's time zone.
+They use computer time while the tile is off or until a forecast has arrived for the saved place since the server started.
 
 The info tile uses the last cell on every fixed-layout page, leaving one fewer
 camera slot. In Spotlight it occupies the fourth strip row, leaving three strip
@@ -221,7 +223,7 @@ The dashboard uses these same-origin endpoints.
 | PATCH | `/api/cameras/camN` | JSON `{ "name": "..." }`; rename without restarting. |
 | DELETE | `/api/cameras/camN` | Remove and restart; returns 204. |
 | PUT | `/api/layout` | JSON `{ "layout": "2x2" }`; allowed: `auto`, `2x1`, `2x2`, `3x3`, `4x4`, `spotlight`. |
-| GET | `/api/weather` | Settings and cached forecast with status `off`, `loading`, `ok` or `unavailable`; never exposes coordinates. |
+| GET | `/api/weather` | Settings, cached forecast, and `timezone` (zone name when enabled and known, otherwise `null`), with status `off`, `loading`, `ok` or `unavailable`; never exposes coordinates. |
 | PUT | `/api/weather` | JSON `{ "enabled": true, "place": "Springfield", "units": "f" }`; units `f` or `c`. Resolves enabled places and returns the same shape as GET. |
 | GET | `/api/frame.jpeg?src=camN` | JPEG relay, capped at 10 MB. |
 | GET | `/api/ws?src=camN` | Same-origin WebSocket upgrade; transparent relay, at most 64 concurrent connections. |

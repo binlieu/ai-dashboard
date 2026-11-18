@@ -121,7 +121,8 @@
                             <input id="weather-enabled" type="checkbox"> Show the info tile
                         </label>
                         <label for="weather-place">ZIP code or city</label>
-                        <input id="weather-place" maxlength="80" placeholder="90210 or Chicago" autocomplete="off" aria-describedby="weather-error">
+                        <input id="weather-place" maxlength="80" placeholder="90210 or Chicago" autocomplete="off" aria-describedby="weather-help weather-error">
+                        <p id="weather-help" class="field-help">The clock shows this place's local time.</p>
                         <label for="weather-units">Units</label>
                         <select id="weather-units">
                             <option value="f">°F, mph</option>
