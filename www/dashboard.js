@@ -12,6 +12,8 @@ const setupButton = find('#setup-button');
 const addForm = find('#add-camera-form');
 const macInput = find('#camera-mac');
 const nameInput = find('#camera-name');
+const rotationSelect = find('#rotation-interval');
+const rotationValues = ['0', '10', '30', '60', '300'];
 const layoutButtons = [...document.querySelectorAll('.layout-options button')];
 const mobile = matchMedia('(max-width: 699px)');
 const layouts = ['auto', '2x1', '2x2', '3x3', '4x4', 'spotlight'];
@@ -22,6 +24,7 @@ const state = {
     visible: [], busy: false, videoChangePending: false, restartUntil: 0,
     cameraRevision: 0, layoutRevision: 0, layoutDirty: false,
     spotlight: readSpotlight(), loadFailed: false,
+    rotationSeconds: readRotationInterval(),
 };
 let loadTimer = 0;
 let loadPromise = null;
@@ -32,9 +35,43 @@ let activeUntil = performance.now() + 4000;
 let idleTimer = 0;
 let pointerOverBar = false;
 let lastPointer = null;
+let nextRotationAt = Date.now() + state.rotationSeconds * 1000;
 
 function readSpotlight() {
     try { return localStorage.getItem('kcd.spotlight'); } catch { return null; }
+}
+
+function readRotationInterval() {
+    try {
+        const value = localStorage.getItem('kcd.rotate');
+        return rotationValues.includes(value) ? Number(value) : 0;
+    } catch { return 0; }
+}
+
+function resetRotation() {
+    nextRotationAt = Date.now() + state.rotationSeconds * 1000;
+}
+
+function changeRotationInterval() {
+    state.rotationSeconds = rotationValues.includes(rotationSelect.value) ? Number(rotationSelect.value) : 0;
+    rotationSelect.value = String(state.rotationSeconds);
+    try { localStorage.setItem('kcd.rotate', rotationSelect.value); } catch { /* Storage can be disabled. */ }
+    resetRotation();
+    announce(state.rotationSeconds ? `Rotation set to ${rotationSelect.selectedOptions[0].textContent}.` : 'Rotation off.');
+}
+
+function rotateSpotlight() {
+    if (!state.rotationSeconds || effectiveLayout() !== 'spotlight' || document.hidden ||
+        setupDialog.open || document.fullscreenElement || Date.now() < nextRotationAt) return;
+    const currentIndex = state.cameras.findIndex(camera => camera.id === state.spotlight);
+    for (let offset = 1; offset < state.cameras.length; offset++) {
+        const camera = state.cameras[(currentIndex + offset) % state.cameras.length];
+        if (state.visible.includes(camera.id) && tiles.get(camera.id)?.state === 'Live') {
+            selectSpotlight(camera.id, {automatic: true});
+            return;
+        }
+    }
+    resetRotation();
 }
 
 function updateActivity() {
@@ -51,12 +88,13 @@ function activate() {
     updateActivity();
 }
 
-function selectSpotlight(id) {
+function selectSpotlight(id, {automatic = false} = {}) {
     state.spotlight = id;
     try { localStorage.setItem('kcd.spotlight', id); } catch { /* Storage can be disabled. */ }
-    activate();
+    resetRotation();
+    if (!automatic) activate();
     renderPage();
-    tiles.get(id).fullscreenButton.focus();
+    if (!automatic) tiles.get(id).fullscreenButton.focus();
 }
 
 class ApiError extends Error {
@@ -523,6 +561,7 @@ function effectiveLayout() {
 function renderPage() {
     const layout = effectiveLayout();
     const spotlight = layout === 'spotlight';
+    if (spotlight && grid.dataset.layout !== 'spotlight') resetRotation();
     if (!state.cameras.some(camera => camera.id === state.spotlight)) state.spotlight = state.cameras[0]?.id ?? null;
     const others = spotlight ? state.cameras.filter(camera => camera.id !== state.spotlight) : state.cameras;
     const slots = spotlight ? 4 : layout === 'auto' ? Math.max(1, state.cameras.length)
@@ -773,9 +812,12 @@ setupButton.addEventListener('click', openSetup);
 find('#empty-setup').addEventListener('click', openSetup);
 find('#close-setup').addEventListener('click', () => setupDialog.close());
 setupDialog.addEventListener('close', () => {
+    resetRotation();
     activate();
     setupButton.focus();
 });
+rotationSelect.value = String(state.rotationSeconds);
+rotationSelect.addEventListener('change', changeRotationInterval);
 addForm.addEventListener('submit', addCamera);
 macInput.addEventListener('input', () => {
     find('#mac-error').textContent = '';
@@ -813,6 +855,7 @@ document.addEventListener('keydown', event => {
     }
 });
 document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) resetRotation();
     tiles.forEach(tile => tile.visibilityChanged());
     updateSummary();
 });
@@ -851,5 +894,6 @@ setInterval(() => {
     updateClock();
     dailyReload();
     tiles.forEach(tile => tile.updatePlaybackStatus());
+    rotateSpotlight();
     updateSummary();
 }, 1000);

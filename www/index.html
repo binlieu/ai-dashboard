@@ -83,6 +83,18 @@
                     <div id="setup-camera-list" class="setup-camera-list"></div>
                 </fieldset>
             </section>
+            <section aria-labelledby="rotation-title">
+                <h3 id="rotation-title">Spotlight rotation</h3>
+                <label for="rotation-interval">Change the large camera</label>
+                <select id="rotation-interval" aria-describedby="rotation-help">
+                    <option value="0" selected>Off</option>
+                    <option value="10">Every 10 seconds</option>
+                    <option value="30">Every 30 seconds</option>
+                    <option value="60">Every minute</option>
+                    <option value="300">Every 5 minutes</option>
+                </select>
+                <p id="rotation-help" class="field-help">Applies to the Spotlight layout on this display.</p>
+            </section>
         </div>
     </dialog>
 

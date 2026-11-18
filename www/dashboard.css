@@ -35,7 +35,7 @@ body {
     overflow: hidden;
 }
 
-button, input {
+button, input, select {
     font: inherit;
 }
 
@@ -63,7 +63,7 @@ button:disabled {
     cursor: default;
 }
 
-input {
+input, select {
     width: 100%;
     min-height: 44px;
     padding: 10px;

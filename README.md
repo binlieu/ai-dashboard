@@ -142,7 +142,14 @@ show it large; keyboard focus moves to its Fullscreen button. The selection is
 remembered in this browser when local storage is available, otherwise it lasts
 for the current visit. If the selected camera is removed, the first configured
 camera takes its place. Paging changes only the strip, and a single camera fills
-the whole video area. Spotlight does not rotate automatically.
+the whole video area.
+
+In Setup, **Spotlight rotation** can change the large camera every 10 seconds,
+30 seconds, minute or 5 minutes; it defaults to **Off** and is remembered on this
+display when local storage is available. Rotation chooses only Live cameras on
+the visible strip page and pauses while the tab is hidden, Setup is open, or any
+element is fullscreen. Manual selection restarts the interval; automatic changes
+leave the controls idle and keyboard focus unchanged.
 
 Hover over or focus a grid tile or the large Spotlight tile to reveal its
 **Snapshot** and **Fullscreen** icon buttons. Both buttons are keyboard accessible
