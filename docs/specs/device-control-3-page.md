@@ -25,8 +25,8 @@ No Python, no tests, nothing under `www/vendor/`.
    device in saved order: text = device name (truncate with ellipsis, max about 14ch, full name
    in `title`), `aria-pressed` true/false for on/off, and a visible state that is not
    colour-only: a leading marker plus the word "On"/"Off" (visually compact, e.g. "Porch · On").
-   - Unknown state: `aria-pressed="mixed"`, text "… · ?", and a press only re-reads the state
-     (GET) and shows the result; it never sends a command blind.
+   - Unknown state: `aria-pressed="mixed"`, text "… · ?", and a press only re-reads the list
+     (`GET api/devices`) and shows the result; it never sends a command blind.
    - Press: disable that one button (`aria-busy`), `PUT api/devices/<id>/state` with
      `{"on": !current}`, then show the state from the response. On error show the server
      message in the existing notice area for 6 s and mark the button unknown.
@@ -36,8 +36,8 @@ No Python, no tests, nothing under `www/vendor/`.
    - Narrow/portrait bars: the group wraps or scrolls horizontally inside the bar without
      pushing the clock, date or health counts off-screen; with 6 devices at 1280 px wide
      nothing overlaps.
-3. **Data flow**: `GET api/devices` on load, after every Setup change, and every 15 s from the
-   existing single one-second tick (no new timers, `grep -c setInterval` stays 1). Skip the
+3. **Data flow**: `GET api/devices` on load, after every Setup change, and every 15 s (every 3 s while any device is
+   unknown) from the existing single one-second tick (no new timers, `grep -c setInterval` stays 1). Skip the
    poll while a state change for that device is in flight. Build DOM with `textContent` only;
    update buttons in place (do not rebuild the group every poll, so focus is kept).
 4. **Themes**: style the group in all four themes (default, mission, hud, observatory) using

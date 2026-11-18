@@ -50,12 +50,15 @@ Pure helpers (fixed by the acceptance tests):
   single `relay_state`) → `ControlError` (`unsupported` for the children case, else `protocol`).
 
 Client:
-- `DeviceClient(user, password, timeout=4.0, opener=None, connector=None, random=os.urandom)`.
+- `DeviceClient(user, password, timeout=2.0, opener=None, connector=None, random=os.urandom)`.
   `opener`/`connector` are injection points for tests (HTTP exchange and TCP exchange); the
   defaults use `http.client.HTTPConnection(ip, 80)` and `socket.create_connection((ip, 9999))`.
 - `read(ip) -> bool` and `set(ip, on) -> bool` (`set` sends the command, then reads the state
   back and returns what the device reports).
 - Accept only a unicast IPv4 string (same rule as `app/identify.py`); else `ControlError("unreachable")`.
+- `set` never sends a command over a path that has not answered a read for that IP in this
+  process: when no working path is remembered, do a `read` first to learn it, then send the
+  command on that path.
 - Order: try legacy TCP first. Connection refused / reset / timeout / a `protocol` failure on
   legacy → try KLAP. Remember per IP which path worked (in memory) and try it first next time.
 - KLAP exchange: `POST /app/handshake1` with a 16-byte random local seed → 200 with exactly 48

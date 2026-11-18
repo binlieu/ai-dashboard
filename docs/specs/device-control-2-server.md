@@ -14,7 +14,7 @@ using `DeviceClient` from task 1.
 No page files in this task. Do not change `app/aes.py`, `app/kasa_control.py`, `app/identify.py`.
 
 ## Acceptance tests (written by Claude — do NOT modify)
-- `tests/test_security_devices_acceptance.py` and every other `tests/*_acceptance.py`, plus
+- `tests/test_security_devices_acceptance.py`, `tests/test_store_devices_acceptance.py` and every other `tests/*_acceptance.py`, plus
   `tests/test_security.py`. All must pass: `/usr/bin/python3 -m unittest discover -s tests -t .`
 
 ## What to do
@@ -32,14 +32,15 @@ No page files in this task. Do not change `app/aes.py`, `app/kasa_control.py`, `
    `duplicate` (409), `limit` (409), `not_found` (404). Camera rollback (`restore`) must not
    drop a device saved meanwhile (same pattern as weather).
 3. **Service** (`app/devices.py`): `DeviceService(store, client, lookup=ip_for_mac,
-   sweep=sweep_local_network, identify=identify_device, clock=time.monotonic)` with its own
-   lock; it never takes the camera application lock and never holds its lock during network I/O
-   longer than one device operation (serialise operations per service; reads from `snapshot()`
-   must not wait on the network).
-   - `snapshot()` → `{"devices": [{"id","name","state"}], "max": 6}` with state `"on"`, `"off"`
-     or `"unknown"`. Never returns MAC-derived IPs; MACs are returned only by `settings()`
-     (`{"devices":[{"id","name","mac","state"}], "max": 6}`) — use `settings()` for `GET /api/devices`
-     because Setup lists MACs exactly as it does for cameras.
+   sweep=sweep_local_network, identify=identify_device, clock=time.monotonic)` with **two locks**, as
+   `WeatherService` does: an operation lock that serialises network operations (one device
+   exchange at a time) and a short state lock for the cached states/IPs. `settings()` takes
+   only the state lock and never waits on the network. The background poll takes the operation
+   lock **per device**, not for the whole round, so a button press waits for at most one device
+   exchange. It never takes the camera application lock.
+   - `settings()` → `{"devices":[{"id","name","mac","state"}], "max": 6}` with state `"on"`,
+     `"off"` or `"unknown"`; this is the body of `GET /api/devices` (Setup lists MACs exactly as
+     it does for cameras). IP addresses are never returned.
    - `add(body)`: validate → find the IP (lookup, one sweep, lookup) else 404 `not_found`
      "Device not found on this network." → `identify(ip)`: kind must be `plug`, `switch` or
      `plug_or_switch`; a camera → 422 `not_device` "This is a camera. Add it under Cameras.";
@@ -54,13 +55,13 @@ No page files in this task. Do not change `app/aes.py`, `app/kasa_control.py`, `
      failure), `client.set`, update the cached state, return `{"id","name","state"}`.
      Failures → 502 `unreachable` (or 422 `auth`) and the cached state becomes `"unknown"`.
    - Background thread (`start()`/`stop()` like `WeatherService`): every 15 s read each device's
-     state (one at a time); a failure marks it `"unknown"` and retries next round; refresh a
+     state (one at a time); a failure marks it `"unknown"`, and devices whose state is
+     `"unknown"` are retried every 3 s until they answer; refresh a
      missing IP with `lookup` (no sweeps in the background).
    - `rename`, `remove`.
 4. **Server** (`app/server.py`, `app/__main__.py`): routes map to the service; `DeviceClient`
-   is built in `__main__` from the Kasa login already loaded from `.env` (the app keeps the
-   password base64-encoded for cameras; decode it in memory for the client, never log it, never
-   put it in `run/go2rtc.yaml` or any file). `DashboardApplication` takes `devices=None`
+   is built in `__main__` from the Kasa login already loaded from `.env` (`__main__` already holds the plain
+   password in memory; pass it to the client, never log it, never put it in any file). `DashboardApplication` takes `devices=None`
    (tests inject a fake). Errors use the existing `{ "error", "message" }` shape. Start/stop
    the service with the application. Device requests must not block camera requests.
 
