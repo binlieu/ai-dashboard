@@ -15,9 +15,14 @@
     --offline: #ff9292;
     --scrim: #101216e8;
     --backdrop: #0009;
+    --page: var(--video);
+    --input-surface: var(--video);
+    --info-surface: var(--surface);
+    --bar-surface: var(--surface);
+    --mono-font: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
     --bar-font: clamp(12px, 1.12vh, 24px);
     --bar-control: clamp(32px, 2.96vh, 64px);
-    background: var(--video);
+    background: var(--page);
     color: var(--text);
 }
 
@@ -69,7 +74,7 @@ input, select {
     padding: 10px;
     border: 1px solid var(--border);
     border-radius: 4px;
-    background: var(--video);
+    background: var(--input-surface);
     color: var(--text);
     font-size: 16px;
 }
@@ -112,7 +117,7 @@ fieldset:disabled input {
     display: grid;
     grid-template-rows: minmax(0, 1fr);
     overflow: auto;
-    background: var(--video);
+    background: var(--page);
 }
 
 .status-bar {
@@ -123,7 +128,7 @@ fieldset:disabled input {
     gap: 4px clamp(12px, 1.1vw, 24px);
     min-height: clamp(40px, 3.704vh, 80px);
     padding: 4px clamp(8px, 0.75vw, 24px);
-    background: var(--surface);
+    background: var(--bar-surface);
     font-size: var(--bar-font);
 }
 
@@ -216,7 +221,7 @@ fieldset:disabled input {
     height: 100%;
     min-height: 0;
     min-width: 0;
-    background: var(--video);
+    background: var(--page);
 }
 
 .camera-grid[data-layout="auto"][data-auto="single"] {
@@ -286,6 +291,15 @@ fieldset:disabled input {
     min-height: 0;
     overflow: hidden;
     background: var(--video);
+}
+
+/* Permanent decoration only; it never participates in layout or receives input. */
+.tile-frame {
+    display: none;
+    position: absolute;
+    z-index: 3;
+    inset: 0;
+    pointer-events: none;
 }
 
 .camera-card.is-offline::after {
@@ -703,7 +717,7 @@ video-stream .info {
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-    background: var(--surface);
+    background: var(--info-surface);
     color: var(--text);
     text-align: center;
     font-variant-numeric: tabular-nums;
@@ -833,4 +847,265 @@ video-stream .info {
     display: flex;
     align-items: center;
     gap: 1.5cqw;
+}
+
+/* Mission control — ground-control telemetry. */
+:root[data-theme="mission"] {
+    --page: #05080d;
+    --surface: #101821;
+    --surface-raised: #1b2632;
+    --surface-hover: #293440;
+    --border: #5c4a2a;
+    --text: #ffb347;
+    --muted: #b4b2a9;
+    --accent: #ffb347;
+    --selected: #3b2c17;
+    --live: #81e3a9;
+    --connecting: #7fb8ff;
+    --offline: #ff9292;
+    --scrim: #101821f2;
+    --backdrop: #05080dcc;
+    --input-surface: #05080d;
+    font-family: var(--mono-font);
+}
+
+:root[data-theme="mission"] input,
+:root[data-theme="mission"] select {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+:root[data-theme="mission"] .camera-grid { gap: 3px; }
+
+:root[data-theme="mission"] .camera-tile,
+:root[data-theme="mission"] .empty-slot { container-type: size; }
+
+:root[data-theme="mission"] .info-tile,
+:root[data-theme="mission"] .empty-slot { position: relative; }
+
+:root[data-theme="mission"] .tile-frame {
+    display: block;
+    border: 1px solid var(--border);
+    color: var(--accent);
+}
+
+:root[data-theme="mission"] .tile-frame::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    --arm: max(10px, min(2.5cqw, 2.5cqh));
+    --line: min(2px, 3cqw, 3cqh);
+    background:
+        linear-gradient(currentColor, currentColor) top left / var(--arm) var(--line),
+        linear-gradient(currentColor, currentColor) top left / var(--line) var(--arm),
+        linear-gradient(currentColor, currentColor) top right / var(--arm) var(--line),
+        linear-gradient(currentColor, currentColor) top right / var(--line) var(--arm),
+        linear-gradient(currentColor, currentColor) bottom left / var(--arm) var(--line),
+        linear-gradient(currentColor, currentColor) bottom left / var(--line) var(--arm),
+        linear-gradient(currentColor, currentColor) bottom right / var(--arm) var(--line),
+        linear-gradient(currentColor, currentColor) bottom right / var(--line) var(--arm);
+    background-repeat: no-repeat;
+    pointer-events: none;
+}
+
+:root[data-theme="mission"] .is-offline .tile-frame {
+    border-color: var(--offline);
+    color: var(--offline);
+}
+
+:root[data-theme="mission"] .tile-label,
+:root[data-theme="mission"] .status-bar,
+:root[data-theme="mission"] .info-date,
+:root[data-theme="mission"] .info-message,
+:root[data-theme="mission"] .info-weather {
+    text-transform: uppercase;
+}
+
+:root[data-theme="mission"] .tile-label { border-radius: 0; }
+
+:root[data-theme="mission"] .tile-label-text::before {
+    content: "CAM " attr(data-index) " · " / "";
+}
+
+:root[data-theme="mission"] .camera-dot { border-radius: 0; }
+
+:root[data-theme="mission"] .camera-card[data-state="connecting"] .tile-label-text,
+:root[data-theme="mission"] .camera-card[data-state="reconnecting"] .tile-label-text {
+    color: var(--connecting);
+}
+
+:root[data-theme="mission"] .empty-slot {
+    background: var(--surface);
+}
+
+:root[data-theme="mission"] .row-mac { font-family: var(--mono-font); }
+
+/* Starship HUD — static cyan line-work, entirely on the frame overlay. */
+:root[data-theme="hud"] {
+    --page: #02060a;
+    --surface: #0b1a24;
+    --surface-raised: #102c3b;
+    --surface-hover: #183d50;
+    --border: #2aa9c9;
+    --text: #7fe7ff;
+    --muted: #a4c7d2;
+    --accent: #7fe7ff;
+    --selected: #163d50;
+    --live: #81e3a9;
+    --connecting: #f2ce7a;
+    --offline: #ff9292;
+    --scrim: #0b1a24f2;
+    --backdrop: #02060acc;
+    --input-surface: #02060a;
+}
+
+:root[data-theme="hud"] .camera-grid { gap: 6px; }
+
+:root[data-theme="hud"] .camera-tile {
+    container-type: size;
+    overflow: visible;
+}
+
+:root[data-theme="hud"] .info-tile,
+:root[data-theme="hud"] .empty-slot { position: relative; }
+
+:root[data-theme="hud"] .empty-slot { container-type: size; }
+
+:root[data-theme="hud"] .tile-frame {
+    display: block;
+    --cut: max(12px, min(2.5cqw, 2.5cqh));
+    --edge: min(3cqw, 3cqh);
+    color: var(--border);
+    /* Keep decoration within the outer 3%, even on very small mobile tiles. */
+    clip-path: polygon(evenodd,
+        0 0, 100% 0, 100% 100%, 0 100%, 0 0,
+        var(--edge) var(--edge), var(--edge) calc(100% - var(--edge)),
+        calc(100% - var(--edge)) calc(100% - var(--edge)),
+        calc(100% - var(--edge)) var(--edge), var(--edge) var(--edge));
+}
+
+:root[data-theme="hud"] .tile-frame::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: currentColor;
+    /* Outer cut shape minus a 1px inset cut shape. */
+    clip-path: polygon(evenodd,
+        var(--cut) 0, 100% 0, 100% calc(100% - var(--cut)),
+        calc(100% - var(--cut)) 100%, 0 100%, 0 var(--cut), var(--cut) 0,
+        calc(var(--cut) + 0.414px) 1px, 1px calc(var(--cut) + 0.414px),
+        1px calc(100% - 1px), calc(100% - var(--cut) - 0.414px) calc(100% - 1px),
+        calc(100% - 1px) calc(100% - var(--cut) - 0.414px),
+        calc(100% - 1px) 1px, calc(var(--cut) + 0.414px) 1px);
+    pointer-events: none;
+}
+
+:root[data-theme="hud"] .tile-frame::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+        linear-gradient(135deg, var(--page) 50%, transparent 50%) top left / var(--cut) var(--cut),
+        linear-gradient(315deg, var(--page) 50%, transparent 50%) bottom right / var(--cut) var(--cut);
+    background-repeat: no-repeat;
+    pointer-events: none;
+}
+
+:root[data-theme="hud"] .is-offline .tile-frame { color: var(--offline); }
+
+:root[data-theme="hud"] .camera-card.is-offline::after { border: 0; }
+
+:root[data-theme="hud"] .tile-label {
+    left: max(16px, min(3cqw, 3cqh));
+    bottom: max(16px, min(3cqw, 3cqh));
+    max-width: calc(100% - clamp(128px, 13vh, 280px));
+    border-radius: 0;
+    font-size: clamp(16px, 2.1vh, 44px);
+    font-weight: 400;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+:root[data-theme="hud"] .controls {
+    right: max(16px, min(3cqw, 3cqh));
+    bottom: max(16px, min(3cqw, 3cqh));
+}
+
+:root[data-theme="hud"] .spotlight-strip .tile-label { max-width: calc(100% - 32px); }
+
+:root[data-theme="hud"] .camera-dot {
+    border-radius: 0;
+    transform: rotate(45deg);
+}
+
+:root[data-theme="hud"] .clock,
+:root[data-theme="hud"] .info-clock { letter-spacing: 0.1em; }
+
+:root[data-theme="hud"] .empty-slot {
+    background: var(--surface);
+}
+
+:root[data-theme="hud"] button,
+:root[data-theme="hud"] input,
+:root[data-theme="hud"] select,
+:root[data-theme="hud"] .setup-camera { border-radius: 0; }
+
+:root[data-theme="hud"] .controls button,
+:root[data-theme="hud"] #setup-dialog button { border: 1px solid var(--border); }
+
+/* Deep space observatory — calm indigo with a sparse, static star field. */
+:root[data-theme="observatory"] {
+    --page: #0a0820;
+    --surface: #1b1840;
+    --surface-raised: #28234f;
+    --surface-hover: #383161;
+    --border: #716c9d;
+    --text: #e6e1ff;
+    --muted: #afa9ec;
+    --accent: #afa9ec;
+    --selected: #37305f;
+    --live: #81e3a9;
+    --connecting: #f2ce7a;
+    --offline: #ed93b1;
+    --scrim: #1b1840eb;
+    --backdrop: #0a0820cc;
+    --input-surface: #120f33;
+    --info-surface: #120f33;
+    --bar-surface: #120f33;
+    --stars: #afa9ec26;
+}
+
+:root[data-theme="observatory"] .camera-grid { gap: 6px; }
+
+:root[data-theme="observatory"] .camera-card,
+:root[data-theme="observatory"] .info-tile,
+:root[data-theme="observatory"] .empty-slot { border-radius: 10px; }
+
+:root[data-theme="observatory"] .tile-label { border-radius: 999px; }
+
+:root[data-theme="observatory"] .info-tile,
+:root[data-theme="observatory"] .empty-slot {
+    background-color: var(--info-surface);
+    background-image:
+        radial-gradient(circle at 13% 19%, var(--stars) 0.8px, transparent 1.3px),
+        radial-gradient(circle at 79% 12%, var(--stars) 0.6px, transparent 1.1px),
+        radial-gradient(circle at 91% 66%, var(--stars) 0.8px, transparent 1.3px),
+        radial-gradient(circle at 24% 84%, var(--stars) 0.6px, transparent 1.1px),
+        radial-gradient(circle at 62% 49%, var(--stars) 0.6px, transparent 1.1px);
+}
+
+:root[data-theme="observatory"] .camera-card.is-offline::after { border-radius: 10px; }
+
+:root[data-theme="observatory"] .status-bar { border-radius: 10px 10px 0 0; }
+
+/* Browser fullscreen always presents the camera without theme decoration or clipping. */
+:root[data-theme] .camera-tile:fullscreen {
+    border: 0;
+    border-radius: 0;
+    overflow: visible;
+    clip-path: none;
+}
+
+:root[data-theme] .camera-tile:fullscreen .tile-frame,
+:root[data-theme] .camera-tile:fullscreen::after {
+    display: none;
 }

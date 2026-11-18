@@ -1,4 +1,20 @@
+const themeValues = ['default', 'mission', 'hud', 'observatory'];
+const initialTheme = readTheme();
+applyTheme(initialTheme);
+
 import './vendor/video-stream.js';
+
+function readTheme() {
+    try {
+        const value = localStorage.getItem('kcd.theme');
+        return themeValues.includes(value) ? value : 'default';
+    } catch { return 'default'; }
+}
+
+function applyTheme(value) {
+    if (value === 'default') delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = value;
+}
 
 const find = selector => document.querySelector(selector);
 const dashboard = find('.dashboard');
@@ -13,6 +29,7 @@ const addForm = find('#add-camera-form');
 const macInput = find('#camera-mac');
 const nameInput = find('#camera-name');
 const rotationSelect = find('#rotation-interval');
+const themeSelect = find('#theme-select');
 const infoTile = find('#info-tile');
 const weatherForm = find('#weather-form');
 const rotationValues = ['0', '10', '30', '60', '300'];
@@ -427,6 +444,7 @@ class CameraTile {
         const text = this.camera.name + suffix;
         if (this.label.textContent !== text) this.label.textContent = text;
         this.dot.dataset.state = status;
+        this.card.dataset.state = status;
         this.card.classList.toggle('is-offline', status === 'offline' || status === 'unavailable');
     }
 
@@ -748,6 +766,10 @@ function reconcile(cameras) {
     cameras.forEach((camera, index) => {
         if (tiles.has(camera.id)) tiles.get(camera.id).update(camera);
         else tiles.set(camera.id, new CameraTile(camera));
+        const tile = tiles.get(camera.id);
+        const feedIndex = String(index + 1).padStart(2, '0');
+        tile.card.dataset.index = feedIndex;
+        tile.label.dataset.index = feedIndex;
         placeNode(grid, tiles.get(camera.id).card, index);
         if (rows.has(camera.id)) rows.get(camera.id).update(camera);
         else rows.set(camera.id, new SetupRow(camera));
@@ -788,6 +810,10 @@ function renderPage() {
             const placeholder = document.createElement('div');
             placeholder.className = 'empty-slot';
             placeholder.textContent = 'Empty';
+            const frame = document.createElement('span');
+            frame.className = 'tile-frame';
+            frame.setAttribute('aria-hidden', 'true');
+            placeholder.appendChild(frame);
             grid.appendChild(placeholder);
         }
     }
@@ -1031,6 +1057,14 @@ setupDialog.addEventListener('close', () => {
 });
 rotationSelect.value = String(state.rotationSeconds);
 rotationSelect.addEventListener('change', changeRotationInterval);
+themeSelect.value = initialTheme;
+themeSelect.addEventListener('change', () => {
+    const value = themeValues.includes(themeSelect.value) ? themeSelect.value : 'default';
+    themeSelect.value = value;
+    applyTheme(value);
+    try { localStorage.setItem('kcd.theme', value); } catch { /* Storage can be disabled. */ }
+    announce(`Theme set to ${themeSelect.selectedOptions[0].textContent}.`);
+});
 weatherForm.addEventListener('submit', saveWeather);
 weatherForm.addEventListener('input', () => { weatherFormRevision++; });
 addForm.addEventListener('submit', addCamera);

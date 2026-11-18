@@ -101,6 +101,10 @@ Open **Setup** in the bottom status bar to manage cameras. With an empty camera 
 centred **Open Setup** button takes you to the same panel. Close the panel with
 **Close** or **Esc**; focus returns to Setup.
 
+**Themes:** in **Setup → Theme → Look**, choose **Default**, **Mission control**,
+**Starship HUD** or **Deep space observatory**. The choice is saved per display
+and applies immediately without interrupting video.
+
 - **Add:** enter the camera's MAC address, with colons, dashes or 12 hexadecimal
   digits without separators. Find it in the Kasa app under Device settings →
   Device info, or on the camera's label. A name is optional. While the server

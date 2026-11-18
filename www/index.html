@@ -14,6 +14,7 @@
         <div class="dashboard-content">
             <section id="camera-grid" class="camera-grid" aria-label="Cameras" hidden>
                 <article id="info-tile" class="info-tile" aria-label="Clock and weather" hidden>
+                    <span class="tile-frame" aria-hidden="true"></span>
                     <div class="info-content">
                         <time id="info-clock" class="info-clock" aria-label="Local time"></time>
                         <time id="info-date" class="info-date"></time>
@@ -133,6 +134,17 @@
                 <p id="weather-result" class="setup-announcement" role="status"></p>
                 <p id="weather-error" class="field-error" role="alert"></p>
             </section>
+            <section aria-labelledby="theme-title">
+                <h3 id="theme-title">Theme</h3>
+                <label for="theme-select">Look</label>
+                <select id="theme-select" aria-describedby="theme-help">
+                    <option value="default" selected>Default</option>
+                    <option value="mission">Mission control</option>
+                    <option value="hud">Starship HUD</option>
+                    <option value="observatory">Deep space observatory</option>
+                </select>
+                <p id="theme-help" class="field-help">Applies to this display.</p>
+            </section>
         </div>
     </dialog>
 
@@ -168,6 +180,7 @@
     <template id="camera-template">
         <article class="camera-card camera-tile">
             <div class="player-container"></div>
+            <span class="tile-frame" aria-hidden="true"></span>
             <span class="tile-label">
                 <span class="camera-dot" aria-hidden="true"></span>
                 <span class="tile-label-text"></span>
