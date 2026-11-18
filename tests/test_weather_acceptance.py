@@ -290,6 +290,22 @@ class Forecast(unittest.TestCase):
             self.assertIs(type(day["high"]), int)
             self.assertIs(type(day["low"]), int)
 
+    def test_hot_cold_and_windy_values_are_accepted(self):
+        # Limits must fit both unit systems: temperatures -130..160, wind 0..300.
+        payload = forecast(current__temperature_2m=120, current__apparent_temperature=-60,
+                           current__wind_speed_10m=150,
+                           daily__temperature_2m_max=[120, 105.3, 49.4, 45.2, 47.4],
+                           daily__temperature_2m_min=[48.8, 45.4, 43.4, -60, -3.6])
+        result = parse_forecast(payload)
+        self.assertEqual((result["current"]["temp"], result["current"]["feels"],
+                          result["current"]["wind"]), (120, -60, 150))
+        self.assertEqual(result["days"][1]["high"], 105)
+        self.assertEqual(result["days"][3]["low"], -60)
+        for bad in (forecast(current__temperature_2m=161), forecast(current__temperature_2m=-131),
+                    forecast(current__wind_speed_10m=301)):
+            with self.assertRaises(WeatherError):
+                parse_forecast(bad)
+
     def test_rain_is_clamped(self):
         payload = forecast(daily__precipitation_probability_max=[-5, 250, 39, None, 0])
         self.assertEqual([day["rain"] for day in parse_forecast(payload)["days"]],

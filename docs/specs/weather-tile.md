@@ -7,7 +7,8 @@ Add an optional "info tile" to the dashboard grid that shows a large clock, the 
 weather and a 5-day forecast for a place the user enters in Setup (a US ZIP code or a city name).
 
 ## Scope — touch ONLY these
-- `app/weather.py` (new), `app/store.py`, `app/server.py`, `app/security.py`
+- `app/weather.py` (new), `app/store.py`, `app/server.py`, `app/security.py`, `app/__main__.py`
+  (only to create, start and stop the weather service)
 - `www/index.html`, `www/dashboard.css`, `www/dashboard.js`
 - `tests/test_weather.py` (new — your own tests), `tests/test_store.py`, `tests/test_server.py`
 - `README.md`
@@ -38,7 +39,8 @@ from Open-Meteo (no API key), verified response shapes:
 `app/weather.py`:
 - Pure functions per the acceptance tests. `WeatherError(code, message)`; codes used:
   `invalid_settings`, `invalid_place`, `invalid_units`, `place_not_found`, `weather_unavailable`.
-  Messages are fixed strings; never include upstream text.
+  Messages are fixed strings; never include upstream text. `parse_forecast` accepts
+  temperatures −130..160 and wind 0..300 (limits fit both unit systems), codes 0..99.
 - `fetch_json(url, opener=None)`: `urllib.request` with default certificate verification, the
   URL host must be one of the two hosts above and scheme `https` (assert before opening), no
   redirects followed to other hosts (install a redirect handler that refuses), timeout 10 s,
@@ -47,9 +49,13 @@ from Open-Meteo (no API key), verified response shapes:
 - `class WeatherService(store, fetch=fetch_json, clock=time.time)`:
   - `snapshot()` → the dict returned by `GET /api/weather` (below). Never blocks on the network.
   - `configure(body)` → validates, and when `enabled` with a place different from the stored
-    one, geocodes it (network, ≤10 s) and saves `{enabled, place, units, name, lat, lon}` through
-    the store; when the place is unchanged, keeps the stored name/lat/lon without a network call;
-    then triggers a refresh. Raises `WeatherError`.
+    one **or with no stored coordinates**, geocodes it (network, ≤10 s) and saves
+    `{enabled, place, units, name, lat, lon}` through the store; only when the place is unchanged
+    AND coordinates are stored does it skip the network call. Saving a different place while
+    disabled stores the place and clears `name`/`lat`/`lon` (no network), so a later enable
+    geocodes it. Any change of place or units drops the cached forecast immediately, and a
+    fetch that started under older settings must discard its result (use a generation counter).
+    Then triggers a refresh. Raises `WeatherError`.
   - A daemon thread refreshes the forecast when enabled: immediately after start/configure, then
     every 15 minutes; after a failure retry in 2 minutes. Keep the last good forecast and its
     fetch time; a forecast older than 3 hours is dropped (tile shows "Weather unavailable").
@@ -65,6 +71,7 @@ Add an optional `"weather"` object to the state file:
   `enabled` true requires a name and coordinates); an invalid weather object alone must **not**
   discard the camera list: reset just the weather object to defaults and log one warning.
 - Add `get_weather()` / `set_weather(dict)` using the existing atomic-write path and lock.
+- Camera add/rename/remove and layout saves must preserve the weather object (test this).
 
 ### 3. API (`app/server.py`, `app/security.py`)
 - `GET /api/weather` → 200
@@ -100,12 +107,14 @@ Add an optional `"weather"` object to the state file:
 - **Content** (all text via `textContent`; scale with the tile using container-relative units
   such as `cqh`/`cqw` with `clamp()`, so it is readable in a 480×258 strip slot and in a
   960×540 grid cell):
-  - Clock `HH:MM` as the largest element (24-hour, tabular numerals, updates from the existing
+  - Clock as the largest element (hours and minutes in the browser's locale format via
+    `toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'})`, tabular numerals, updates from the existing
     1 s tick, only touching the DOM when the minute changes), date below it
     (`Wednesday, November 18` via `toLocaleDateString`).
   - Current: temperature (`72°`), a condition word, "Feels 70° · Wind 8 mph", and the resolved
     place name (small, ellipsised).
-  - Forecast row: up to 5 days — weekday (`Today`, `Thu`, …), icon, `high° / low°`, and rain
+  - Forecast row: up to 5 days — weekday (`Today` only when the day's date equals the browser's
+    local date; days before today are hidden; otherwise `Thu`, …), icon, `high° / low°`, and rain
     chance when ≥ 20 % (`60%`). In a small tile show only as many days as fit (hide overflow
     days with a container query rather than shrinking text below ~12 px).
   - Icons: a small fixed set (clear, partly cloudy, cloudy, fog, drizzle, rain, snow, showers,
@@ -116,6 +125,8 @@ Add an optional `"weather"` object to the state file:
   - States: `loading` → clock and date plus "Loading weather…"; `unavailable` or a forecast
     whose `updated` is more than 3 hours old → clock and date plus "Weather unavailable"; the
     clock and date always render, even when `api/weather` fails.
+- Enabling, disabling or refreshing the tile must not detach or re-insert any camera tile, and
+  saving weather settings must not restart go2rtc or interrupt video.
 - **Refresh:** fetch `api/weather` on load, after a successful save, and every 5 minutes from the
   existing 1 s tick (no new timers); after a `loading` reply, poll every 5 s until it settles
   (max 1 minute). Failures are silent retries at the next 5-minute mark.
@@ -125,7 +136,8 @@ Add an optional `"weather"` object to the state file:
 Document the info tile, the Setup fields, and a short privacy note: the place you type and its
 coordinates rounded to two decimals (about 1 km) are sent from this computer to Open-Meteo
 (`open-meteo.com`) to look up the forecast; nothing else is sent, and the browser itself makes
-no external requests. Add the two routes to the API table.
+no external requests. Add the two routes to the API table. Add the credit line "Weather data
+by Open-Meteo.com (CC BY 4.0)" and note that Open-Meteo's free service is for non-commercial use.
 
 ## Constraints
 - Python 3.9 standard library only; plain ES modules; no new dependencies; no new files beyond
