@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from app.store import CameraStore, StoreError, seed_state, validate_name
+from app.store import CameraStore, StoreError, WEATHER_DEFAULTS, seed_state, validate_name
 
 MAC = 'AA:BB:CC:DD:EE:01'
 
@@ -129,3 +129,61 @@ class StoreTests(unittest.TestCase):
             cameras = list(executor.map(lambda index: store.add('00:11:22:33:44:%02x' % index), range(16)))
         self.assertEqual(len({camera['id'] for camera in cameras}), 16)
         self.assertEqual(len(CameraStore(self.path).snapshot()['cameras']), 16)
+
+    def test_legacy_weather_defaults_do_not_change_existing_file_shape(self):
+        store = CameraStore(self.path, {'CAMERA_MAC': MAC})
+        original = self.path.read_bytes()
+        self.assertNotIn('weather', store.snapshot())
+        self.assertEqual(store.get_weather(), WEATHER_DEFAULTS)
+        self.assertEqual(CameraStore(self.path).get_weather(), WEATHER_DEFAULTS)
+        self.assertEqual(self.path.read_bytes(), original)
+        settings = store.get_weather()
+        settings['enabled'] = True
+        self.assertEqual(store.get_weather(), WEATHER_DEFAULTS)
+
+    def test_weather_preserved_across_camera_and_layout_changes_and_rollback(self):
+        store = CameraStore(self.path)
+        previous = store.snapshot()
+        weather = dict(WEATHER_DEFAULTS, enabled=True, place='Springfield',
+                       name='Springfield, Illinois, United States', lat=39.8, lon=-89.64)
+        store.set_weather(weather)
+        camera = store.add(MAC)
+        store.rename(camera['id'], 'Camera')
+        store.set_layout('spotlight')
+        store.remove(camera['id'])
+        self.assertEqual(CameraStore(self.path).get_weather(), weather)
+        store.restore(previous)
+        self.assertEqual(CameraStore(self.path).get_weather(), weather)
+        weather['place'] = '90210'
+        self.assertEqual(store.get_weather()['place'], 'Springfield')
+
+    def test_invalid_weather_resets_only_weather_and_warns_once(self):
+        store = CameraStore(self.path, {'CAMERA_MAC': MAC})
+        original = store.snapshot()
+        bad = [None, [], {}, dict(WEATHER_DEFAULTS, enabled=1), dict(WEATHER_DEFAULTS, units='k'),
+               dict(WEATHER_DEFAULTS, lat=0), dict(WEATHER_DEFAULTS, lat=91, lon=0),
+               dict(WEATHER_DEFAULTS, lat=0, lon=-181), dict(WEATHER_DEFAULTS, lat=True, lon=0),
+               dict(WEATHER_DEFAULTS, lat=float('nan'), lon=0), dict(WEATHER_DEFAULTS, enabled=True),
+               dict(WEATHER_DEFAULTS, place='x' * 81), dict(WEATHER_DEFAULTS, name='x' * 121),
+               dict(WEATHER_DEFAULTS, place='Springfield\n'), dict(WEATHER_DEFAULTS, extra=1)]
+        for weather in bad:
+            with self.subTest(weather=weather):
+                self.path.write_text(json.dumps(dict(original, weather=weather)))
+                warning = Mock()
+                loaded = CameraStore(self.path, warning=warning)
+                self.assertEqual(loaded.snapshot()['cameras'], original['cameras'])
+                self.assertEqual(loaded.get_weather(), WEATHER_DEFAULTS)
+                self.assertEqual(json.loads(self.path.read_text())['weather'], WEATHER_DEFAULTS)
+                self.assertEqual(list(self.path.parent.glob('*.corrupt-*')), [])
+                warning.assert_called_once()
+                with self.assertRaises((ValueError, TypeError)):
+                    loaded.set_weather(weather)
+
+    def test_weather_atomic_failure_does_not_change_settings(self):
+        store = CameraStore(self.path)
+        original = self.path.read_bytes()
+        with patch('app.store.os.replace', side_effect=OSError('synthetic write failure')):
+            with self.assertRaises(OSError):
+                store.set_weather(dict(WEATHER_DEFAULTS, place='Springfield'))
+        self.assertEqual(store.get_weather(), WEATHER_DEFAULTS)
+        self.assertEqual(self.path.read_bytes(), original)

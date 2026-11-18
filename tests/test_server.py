@@ -24,6 +24,8 @@ from unittest.mock import Mock, patch
 from app.go2rtc import UnixHTTPClient, UnixHTTPConnection
 from app.server import DashboardApplication, DashboardHandler, DashboardServer
 from app.store import CameraStore
+from app.weather import WeatherError, WeatherService
+from tests.test_weather import PLACE, SETTINGS, forecast_payload
 
 MAC1, MAC2 = 'aa:bb:cc:dd:ee:01', 'aa:bb:cc:dd:ee:02'
 WS_KEY = 'dGhlIHNhbXBsZSBub25jZQ=='
@@ -345,6 +347,69 @@ class ServerTests(unittest.TestCase):
         self.assertEqual((status, headers['Content-Length'], body), (204, '0', b''))
         self.assertEqual(self.request('DELETE', '/api/cameras/cam1')[0], 404)
 
+    def test_weather_routes_cached_response_and_no_bridge_changes(self):
+        fetch = Mock(side_effect=[PLACE, forecast_payload()])
+        self.application.weather = WeatherService(self.store, fetch, lambda: 100000)
+        status, _, body = self.request('GET', '/api/weather')
+        self.assertEqual((status, json.loads(body)['status']), (200, 'off'))
+        fetch.assert_not_called()
+        status, _, body = self.request('PUT', '/api/weather', SETTINGS)
+        self.assertEqual((status, json.loads(body)['status']), (200, 'loading'))
+        self.application.weather.refresh_once()
+        status, _, body = self.request('GET', '/api/weather')
+        result = json.loads(body)
+        self.assertEqual((status, result['status'], result['forecast']['updated']), (200, 'ok', 100000))
+        self.assertNotIn('lat', result)
+        self.assertNotIn('lon', result)
+        self.assertEqual(self.bridge.applied, [])
+        self.assertEqual(self.upstream.requests, [])
+
+    def test_weather_errors_body_limits_and_invalid_json(self):
+        service = self.application.weather = WeatherService(self.store, Mock(), lambda: 100000)
+        for code, expected in (('place_not_found', 404), ('weather_unavailable', 502)):
+            service.fetch.side_effect = WeatherError(code, 'SENTINEL')
+            status, _, body = self.request('PUT', '/api/weather', SETTINGS)
+            self.assertEqual((status, json.loads(body)['error']), (expected, code))
+            self.assertNotIn(b'SENTINEL', body)
+        for body, code in ((dict(SETTINGS, enabled=1), 'invalid_settings'),
+                           (dict(SETTINGS, place=''), 'invalid_place'),
+                           (dict(SETTINGS, units='k'), 'invalid_units')):
+            status, _, response = self.request('PUT', '/api/weather', body)
+            self.assertEqual((status, json.loads(response)['error']), (400, code))
+        self.assertEqual(self.request('PUT', '/api/weather', dict(SETTINGS, place='x'*5000))[0], 413)
+        self.assertEqual(self.request('PUT', '/api/weather', [])[0], 400)
+        connection = self.connection()
+        try:
+            connection.request('PUT', '/api/weather', body=b'{', headers={
+                'Host': self.host, 'Origin': 'http://' + self.host, 'Content-Type': 'application/json'})
+            response = connection.getresponse()
+            self.assertEqual(response.status, 400)
+            self.assertEqual(json.loads(response.read())['error'], 'invalid_json')
+        finally:
+            connection.close()
+
+    def test_weather_geocode_does_not_block_camera_mutation_or_frame(self):
+        entered, release = threading.Event(), threading.Event()
+        results = []
+        def fetch(url):
+            entered.set()
+            if not release.wait(3):
+                raise WeatherError('weather_unavailable')
+            return PLACE
+        self.application.weather = WeatherService(self.store, fetch, lambda: 100000)
+        worker = threading.Thread(target=lambda: results.append(self.request('PUT', '/api/weather', SETTINGS)), daemon=True)
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(2))
+            self.assertEqual(self.request('PATCH', '/api/cameras/cam1', {'name': 'Camera'})[0], 200)
+            self.assertEqual(self.request('GET', '/api/frame.jpeg?src=cam1')[0], 200)
+        finally:
+            release.set()
+            worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(results[0][0], 200)
+        self.assertEqual(self.bridge.applied, [])
+
     def test_delete_failure_restores_camera(self):
         self.bridge.failures = 1
         self.assertEqual(self.request('DELETE', '/api/cameras/cam1')[0], 502)
@@ -494,12 +559,15 @@ class MainTests(unittest.TestCase):
         event, output = Mock(), io.StringIO()
         event.is_set.return_value = False
         with patch('app.__main__.Go2RTC') as bridge, patch('app.__main__.DashboardServer') as server, \
+                patch('app.__main__.WeatherService') as weather, \
                 patch('app.__main__.threading.Event', return_value=event), patch('app.__main__.threading.Thread') as thread, \
                 patch('app.__main__.signal.signal'), patch('app.__main__.webbrowser.open') as browser, \
                 patch('sys.stdout', output):
             self.assertEqual(main(['--open'], self.root), 0)
             bridge.return_value.start.assert_called_once_with([])
             bridge.return_value.stop.assert_called_once()
+            weather.return_value.start.assert_called_once()
+            weather.return_value.stop.assert_called_once()
             server.return_value.shutdown.assert_called_once()
             server.return_value.server_close.assert_called_once()
             thread.return_value.start.assert_called()

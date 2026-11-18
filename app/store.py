@@ -3,6 +3,7 @@
 import copy
 import datetime
 import json
+import math
 import os
 from pathlib import Path
 import tempfile
@@ -15,6 +16,27 @@ from .security import CAMERA_ID
 
 MAX_CAMERAS = 16
 LAYOUTS = ("auto", "2x1", "2x2", "3x3", "4x4", "spotlight")
+WEATHER_DEFAULTS = {"enabled": False, "place": "", "units": "f", "name": "", "lat": None, "lon": None}
+
+
+def validate_weather(weather):
+    if not isinstance(weather, dict) or set(weather) != set(WEATHER_DEFAULTS):
+        raise ValueError("Invalid weather settings")
+    if type(weather["enabled"]) is not bool or weather["units"] not in ("f", "c"):
+        raise ValueError("Invalid weather settings")
+    for key, limit in (("place", 80), ("name", 120)):
+        text = weather[key]
+        if not isinstance(text, str) or len(text) > limit or text != text.strip() or any(
+                unicodedata.category(char).startswith("C") for char in text):
+            raise ValueError("Invalid weather text")
+    lat, lon = weather["lat"], weather["lon"]
+    if lat is not None or lon is not None:
+        for value, limit in ((lat, 90), (lon, 180)):
+            if type(value) not in (int, float) or not -limit <= value <= limit or not math.isfinite(value):
+                raise ValueError("Invalid weather coordinates")
+    if weather["enabled"] and (not weather["place"] or not weather["name"] or lat is None or lon is None):
+        raise ValueError("Weather needs a resolved place")
+    return copy.deepcopy(weather)
 
 
 class StoreError(ValueError):
@@ -75,7 +97,7 @@ def seed_state(values):
     return {"version": 1, "next_id": len(cameras) + 1, "layout": "auto", "cameras": cameras}
 
 
-def validate_state(state):
+def validate_state(state, warning=None):
     if not isinstance(state, dict) or type(state.get("version")) is not int or state.get("version") != 1 or state.get("layout") not in LAYOUTS:
         raise ValueError("Invalid state")
     next_id = state.get("next_id")
@@ -97,9 +119,17 @@ def validate_state(state):
             raise ValueError("Unexpected camera fields")
         ids.add(camera["id"])
         macs.add(mac)
-    if set(state) != {"version", "next_id", "layout", "cameras"}:
+    if set(state) - {"version", "next_id", "layout", "cameras", "weather"}:
         raise ValueError("Unexpected state fields")
-    return copy.deepcopy(state)
+    state = copy.deepcopy(state)
+    if "weather" in state:
+        try:
+            state["weather"] = validate_weather(state["weather"])
+        except (ValueError, TypeError, OverflowError):
+            state["weather"] = WEATHER_DEFAULTS.copy()
+            if warning:
+                warning("Weather settings were invalid and have been reset; cameras were preserved.")
+    return state
 
 
 class CameraStore:
@@ -111,7 +141,10 @@ class CameraStore:
         if self.path.exists():
             os.chmod(self.path, 0o600)
             try:
-                self._state = validate_state(json.loads(self.path.read_text(encoding="utf-8")))
+                loaded = json.loads(self.path.read_text(encoding="utf-8"))
+                self._state = validate_state(loaded, warning)
+                if "weather" in loaded and loaded["weather"] != self._state["weather"]:
+                    self._save(self._state)
                 return
             except (ValueError, TypeError, KeyError, UnicodeError):
                 suffix = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -137,7 +170,21 @@ class CameraStore:
     def restore(self, state):
         with self.lock:
             state = validate_state(state)
+            # Camera rollback must not overwrite a weather save made during bridge I/O.
+            if "weather" in self._state:
+                state["weather"] = copy.deepcopy(self._state["weather"])
             state["next_id"] = max(state["next_id"], self._state["next_id"])
+            self._commit(state)
+
+    def get_weather(self):
+        with self.lock:
+            return copy.deepcopy(self._state.get("weather", WEATHER_DEFAULTS))
+
+    def set_weather(self, weather):
+        weather = validate_weather(weather)
+        with self.lock:
+            state = self.snapshot()
+            state["weather"] = weather
             self._commit(state)
 
     def check_add(self, mac, name=None):

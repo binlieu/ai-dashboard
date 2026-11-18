@@ -14,6 +14,7 @@ from .envfile import b64, env_get
 from .go2rtc import Go2RTC, Go2RTCError
 from .server import DashboardApplication, DashboardServer
 from .store import CameraStore, StoreError
+from .weather import WeatherService
 
 
 def main(argv=None, repo=None):
@@ -22,7 +23,7 @@ def main(argv=None, repo=None):
     arguments = parser.parse_args(argv)
     repo = Path(repo).resolve() if repo is not None else Path(__file__).resolve().parent.parent
     os.chdir(repo)
-    bridge = server = application = thread = None
+    bridge = server = application = thread = weather = None
     stopped = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda number, frame: stopped.set())
@@ -46,7 +47,8 @@ def main(argv=None, repo=None):
             key: env_get(path, key) for key in ("CAMERA_MACS", "CAMERA_NAMES", "CAMERA_MAC")},
             warning=lambda text: print(text, file=sys.stderr))
         bridge = Go2RTC(repo, user, password)
-        application = DashboardApplication(store, bridge, user, b64(password))
+        weather = WeatherService(store)
+        application = DashboardApplication(store, bridge, user, b64(password), weather=weather)
         # Reserve the public port before any camera connection is opened.
         server = DashboardServer(("127.0.0.1", port), application, repo / "www")
         cameras = resolve_cameras(store.snapshot()["cameras"], sweep=sweep_local_network)
@@ -55,6 +57,7 @@ def main(argv=None, repo=None):
             return 0
         bridge.start(cameras)
         application.start_background()
+        weather.start()
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         url = "http://127.0.0.1:%s/" % port
@@ -76,6 +79,8 @@ def main(argv=None, repo=None):
         print("Dashboard could not start. Check configuration and the stream bridge.", file=sys.stderr)
         return 1
     finally:
+        if weather is not None:
+            weather.stop()
         if server is not None:
             if thread is not None:
                 server.shutdown()
