@@ -56,7 +56,8 @@ No page files in this task.
   6. Finally remove date directories (matching the pattern, not symlinks) that are now empty.
      Never remove a camera directory, the marker, the root, or anything else.
   7. Use `os.scandir`/`lstat`-style checks that do not follow symlinks; a failure to delete one
-     file is skipped, not raised.
+     file is skipped, not raised. If `free_space()` raises, stop the low-space step without
+     deleting anything more.
 
 ### Settings (`app/store.py`)
 - Optional top-level `backup`: `{"folder": str, "cameras": {camera id: days}}`. Defaults
@@ -66,21 +67,29 @@ No page files in this task.
   keys. `get_backup()`, `set_backup(backup)` (returns the saved value; invalid → `ValueError`,
   nothing changes). Removing a camera drops its entry. Files without `backup` load unchanged
   and are not rewritten; invalid `backup` on load resets backup only (one warning). Camera
-  rollback keeps a backup save made meanwhile (same pattern as weather and devices).
+  rollback keeps a backup save made meanwhile (same pattern as weather and devices); if the
+  rolled-back camera list lacks a camera named in `backup`, drop that entry instead of raising.
 
 ### Recorder (`BackupService` in `app/backup.py`)
 - `BackupService(store, open_stream, forbidden, clock=time.time, now=datetime.datetime.now,
-  free_space=None)`; `open_stream(camera_id)` returns a readable binary stream of
+  free_space=None, segment_seconds=SEGMENT_SECONDS, stall_seconds=20, retry_seconds=5,
+  maintenance_seconds=300, wait=None)` — every interval is a constructor argument (a real-device
+  check uses 20-second files; unit tests inject `wait`); `open_stream(camera_id)` returns a readable binary stream of
   `GET /api/stream.mp4?src=<id>` from go2rtc (add `Go2RTC.open_mp4(camera_id)` using the existing
   Unix-socket HTTP connection; status must be 200, else raise; chunked decoding handled by
   `http.client`; the caller closes it). The browser-facing gate still refuses `stream.mp4`.
 - One worker thread per camera with backup on. Loop: open a stream; create
   `segment_path(...)` with `.part` appended (create the camera and date directories, mode 700,
   files 600; the root itself is never created); copy the stream, writing only whole top-level
-  boxes (`split_boxes`); after `SEGMENT_SECONDS` open the **next** stream first and switch files
-  once it has delivered its first whole box, so the gap between files is as small as possible;
-  on switching or stopping, close the file and rename `.part` → `.mp4` (a file with no `moof`
-  box is deleted instead). A stream that ends, stalls for 20 s, or fails → close what was
+  boxes (`split_boxes`); after `segment_seconds` open the **next** stream first and switch files
+  once it has delivered its first `moof` box (`ftyp`/`moov` arrive before any video), so the
+  gap between files is as small as possible; on switching or stopping, close the file and
+  rename `.part` → `.mp4`. A finished file must end with an `mdat`: hold each `moof` back until
+  its `mdat` has arrived, and never write a trailing `moof` alone. A file with no `moof`+`mdat`
+  pair is deleted instead. Never overwrite an existing segment or partial (clock set back,
+  daylight saving): use the next free second. Observed on real cameras: order is
+  `ftyp, moov, moof, mdat, moof, mdat, …`, about 15 `moof`/`mdat` pairs per second, boxes under
+  200 KB, first `moof` about 0.6 s after the request, response is chunked `video/mp4`. A stream that ends, stalls for 20 s, or fails → close what was
   written the same way, wait (5 s, doubling to 60 s), reconnect. Never let one camera's failure
   affect another or the dashboard.
 - Before each segment: the root must exist, be a directory, and contain `MARKER` (the marker is
@@ -98,8 +107,9 @@ No page files in this task.
   `low_space`; `warning` in `folder_missing`, `low_space`, or `None`. `used_bytes` is the size
   of this dashboard's segments, refreshed by the maintenance pass.
 - `configure(body)`: body exactly `{"folder": str, "cameras": {id: 0|1|7|30}}` (0 = off);
-  `validate_folder(folder, forbidden)`; write `MARKER` in the root if absent (plus a short
-  `README.txt` once, saying the folder is managed by the dashboard and files are removed
+  `validate_folder(folder, forbidden)`; write `MARKER` in the root if absent — if that write fails
+  (macOS can refuse writes the access check allowed) raise `folder_readonly` and save nothing —
+  (plus a short `README.txt` once, saying the folder is managed by the dashboard and files are removed
   automatically); save to the store; start/stop workers to match; return `status()`.
   Changing the folder never moves or deletes files in the old folder.
 - `start()` / `stop()`; `stop()` finalises open files within 5 s.

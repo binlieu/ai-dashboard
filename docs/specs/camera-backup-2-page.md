@@ -17,7 +17,7 @@ No Python, no tests, nothing under `www/vendor/`.
    - `<label for="backup-folder">Storage folder</label>` text input (maxlength 1024,
      placeholder `/Volumes/My Drive/Camera backups`), help text: "Type the full path of an
      existing folder, for example on an external drive. Video is saved as 3-minute MP4 files;
-     older files are removed automatically."
+     older files are removed automatically. Off stops recording and leaves existing files."
    - One row per camera in configured order: camera name and a `<select>` with `Off`, `Keep 1
      day`, `Keep 7 days`, `Keep 30 days` (values 0/1/7/30), plus a state word from the server
      (`Recording`, `Waiting for video`, `No folder`, `Drive almost full`, `Off`) and, when
@@ -29,6 +29,11 @@ No Python, no tests, nothing under `www/vendor/`.
      free space; older files will be removed early."
    - Button "Save backup settings"; busy state; server error `message` shown inline
      (`role="alert"`); success announced in `#setup-announcement` ("Backup settings saved.").
+   - **Shortening deletes footage.** If Save would shorten a camera's period (30→7, 30→1, 7→1),
+     show an inline confirmation first, naming each such camera and its new period, e.g.
+     "Yard will keep only 1 day. Older recordings are deleted now." with buttons "Save and
+     delete older recordings" and "Cancel". Only the confirm button sends the request.
+     Switching to Off or lengthening a period needs no confirmation.
    - Selecting any period with an empty folder shows the inline error "Enter a storage folder
      first." without calling the server.
 2. **Data**: `GET api/backup` when Setup opens and every 15 s while Setup is open (from the
