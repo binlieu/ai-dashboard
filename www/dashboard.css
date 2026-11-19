@@ -200,6 +200,22 @@ fieldset:disabled input {
     overflow-wrap: anywhere;
 }
 
+.backup-indicator {
+    white-space: nowrap;
+}
+
+.backup-indicator.backup-warning,
+.field-help.backup-warning,
+.backup-state[data-state="waiting"],
+.backup-state[data-state="no_folder"],
+.backup-state[data-state="low_space"] {
+    color: var(--connecting);
+}
+
+.backup-state[data-state="recording"] {
+    color: var(--live);
+}
+
 #device-controls {
     display: flex;
     flex-wrap: wrap;
@@ -664,6 +680,55 @@ video-stream .info {
 
 .remove-question {
     font-size: 14px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.backup-camera {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) clamp(8.5rem, 46%, 10rem);
+    align-items: center;
+    gap: 3px 12px;
+    padding: 9px 0;
+    border-top: 1px solid var(--border);
+}
+
+.setup-body .backup-camera-name {
+    margin: 0;
+    align-self: end;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.backup-camera select {
+    grid-area: 1 / 2 / span 2;
+    min-width: 0;
+}
+
+.backup-camera-status, .backup-sizes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 10px;
+    font-variant-numeric: tabular-nums;
+}
+
+.backup-sizes {
+    margin-top: 8px;
+}
+
+.backup-sizes span:empty {
+    display: none;
+}
+
+.backup-confirmation {
+    margin-top: 12px;
+    padding-inline-start: 12px;
+    border-inline-start: 2px solid var(--connecting);
+}
+
+.backup-confirmation p {
+    margin: 0 0 6px;
+    font-size: 13px;
     line-height: 1.5;
     overflow-wrap: anywhere;
 }

@@ -43,6 +43,7 @@
                 <time id="clock" class="clock" aria-label="Local time"></time>
                 <time id="date" class="date"></time>
                 <span id="summary" class="summary" role="status">Loading cameras…</span>
+                <span id="backup-indicator" class="backup-indicator small-message" role="status" hidden></span>
                 <span id="restart-banner" class="restart-banner" role="status" hidden>Restarting video…</span>
                 <span id="connection-message" class="connection-message" role="status" hidden></span>
                 <span id="layout-message" class="small-message" role="status"></span>
@@ -123,6 +124,32 @@
                 <p id="add-device-progress" class="small-message" role="status" hidden>Looking for the device on your network…</p>
                 <p id="add-device-error" class="field-error" role="alert"></p>
             </section>
+            <section id="setup-backup" aria-labelledby="backup-title">
+                <h3 id="backup-title">Backup</h3>
+                <form id="backup-form" novalidate>
+                    <fieldset id="backup-fields" disabled>
+                        <label for="backup-folder">Storage folder</label>
+                        <input id="backup-folder" type="text" maxlength="1024" placeholder="/Volumes/My Drive/Camera backups" autocomplete="off" spellcheck="false" aria-describedby="backup-help backup-error">
+                        <p id="backup-help" class="field-help">Type the full path of an existing folder, for example on an external drive. Video is saved as 3-minute MP4 files; older files are removed automatically. Off stops recording and leaves existing files.</p>
+                        <div id="backup-camera-list"></div>
+                        <div class="backup-sizes small-message">
+                            <span id="backup-estimate"></span>
+                            <span id="backup-free"></span>
+                            <span id="backup-used"></span>
+                        </div>
+                        <p id="backup-space-note" class="field-help backup-warning" hidden>This is more than the free space; older files will be removed early.</p>
+                        <button id="backup-save" class="primary-button" type="submit">Save backup settings</button>
+                        <div id="backup-confirmation" class="backup-confirmation" role="group" aria-labelledby="backup-confirmation-text" hidden>
+                            <div id="backup-confirmation-text"></div>
+                            <div class="row-actions">
+                                <button id="backup-confirm" class="danger-button" type="button">Save and delete older recordings</button>
+                                <button id="backup-cancel" type="button">Cancel</button>
+                            </div>
+                        </div>
+                    </fieldset>
+                    <p id="backup-error" class="field-error" role="alert"></p>
+                </form>
+            </section>
             <section aria-labelledby="rotation-title">
                 <h3 id="rotation-title">Spotlight rotation</h3>
                 <label for="rotation-interval">Change the large camera</label>
@@ -170,6 +197,22 @@
             </section>
         </div>
     </dialog>
+
+    <template id="backup-camera-template">
+        <div class="backup-camera">
+            <label class="backup-camera-name"></label>
+            <select>
+                <option value="0">Off</option>
+                <option value="1">Keep 1 day</option>
+                <option value="7">Keep 7 days</option>
+                <option value="30">Keep 30 days</option>
+            </select>
+            <div class="backup-camera-status small-message">
+                <span class="backup-state"></span>
+                <time class="backup-last" hidden></time>
+            </div>
+        </div>
+    </template>
 
     <template id="setup-device-template">
         <article class="setup-camera">

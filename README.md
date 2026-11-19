@@ -133,6 +133,15 @@ rename or remove them from the same list. Their status-bar buttons show the
 reported state. Press **On** or **Off** to switch the device, or **?** to refresh
 its state. Anyone using this screen can switch the saved devices.
 
+**Backup:** open **Setup → Backup**, enter the full path to an existing writable
+folder, and choose **Keep 1 day**, **Keep 7 days**, or **Keep 30 days** for each
+camera you want to record. Select **Save backup settings** to apply the choices.
+Shortening retention asks for confirmation before older footage is deleted.
+Choose **Off** to stop recording for a camera and leave its files in place.
+The section shows the estimated storage needed, available drive space, and each
+camera's recording status and last file time. The status bar shows when backup
+is on and when the drive is missing or almost full.
+
 The video area fills the screen above a slim, always-visible status bar with the
 local time, date, and live, offline and connecting counts for the visible cameras.
 Camera labels show a status dot and state in words when video is not live;
