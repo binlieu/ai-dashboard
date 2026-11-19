@@ -217,12 +217,13 @@ def _prune(root_fd, root, policies, now, free_space, min_free, active, guard=Non
             pass
 
     expiry = {camera_id: now - datetime.timedelta(days=days) for camera_id, days in policies.items()}
+    low_space_cutoff = now - datetime.timedelta(hours=24)
     remaining = []
     segments.sort(key=lambda item: item[:2])
     for when, path, info in segments:
         if when < expiry[path.parent.parent.name]:
             remove(path, info, info.st_size)
-        else:
+        elif when < low_space_cutoff:
             remaining.append((path, info))
     partial_cutoff = now - datetime.timedelta(hours=1)
     partials.sort(key=lambda item: item[:2])

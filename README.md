@@ -241,8 +241,9 @@ where they are. If the drive is disconnected, recording resumes after it
 becomes available again.
 
 The dashboard removes recordings older than each enabled camera's retention
-period. When free space drops below 5 GiB, it removes the oldest eligible
-recordings first and pauses recording if it still cannot free enough space.
+period. When free space drops below 5 GiB, it removes older recordings early,
+oldest first, while always keeping the last 24 hours. Recording pauses if it
+still cannot free enough space.
 Cleanup is limited to the dashboard's own recording files and empty date
 folders inside the marked backup folder. Disabling or removing a camera leaves
 its recordings in place.

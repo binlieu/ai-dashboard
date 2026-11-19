@@ -292,6 +292,40 @@ class BackupTests(unittest.TestCase):
         self.assertFalse(self.root.exists())
         self.assertTrue(self.opened.empty())
 
+    def test_recording_pauses_and_retries_when_only_the_last_24_hours_remain(self):
+        delays, resume = queue.Queue(), queue.Queue()
+
+        def wait(delay):
+            delays.put(delay)
+            return resume.get(timeout=2)
+
+        service = self.make_service(wait=wait)
+        self.addCleanup(resume.put, True)
+        self.configure(service)
+        old, boundary, recent = [
+            segment_path(self.root, 'cam1', NOW - datetime.timedelta(hours=hours))
+            for hours in (48, 24, 1)
+        ]
+        for path in (old, boundary, recent):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(PAIR)
+        self.free_space.return_value = MIN_FREE_BYTES - 1
+
+        service.start()
+        self.assertEqual(delays.get(timeout=1), 30)
+        service._maintenance_pass()
+        self.assertFalse(old.exists())
+        self.assertEqual(boundary.read_bytes(), PAIR)
+        self.assertEqual(recent.read_bytes(), PAIR)
+        status = service.status()
+        self.assertEqual(status['warning'], 'low_space')
+        self.assertEqual(status['cameras'][0]['state'], 'low_space')
+        self.assertEqual(status['used_bytes'], 2 * len(PAIR))
+
+        resume.put(False)
+        self.assertEqual(delays.get(timeout=1), 30)
+        self.assertTrue(self.opened.empty())
+
     def test_removing_one_camera_finalizes_its_file_while_the_other_keeps_recording(self):
         written = self.watch_pairs()
         front, yard = FakeStream(), FakeStream()
@@ -347,7 +381,7 @@ class BackupTests(unittest.TestCase):
         stream = FakeStream()
         self.sources.put(stream)
         self.configure(service)
-        recording = segment_path(self.root, 'cam1', NOW - datetime.timedelta(hours=2))
+        recording = segment_path(self.root, 'cam1', NOW - datetime.timedelta(days=2))
         recording.parent.mkdir(parents=True)
         recording.write_bytes(PAIR)
         self.free_space.side_effect = lambda: 0 if recording.exists() else PLENTY
