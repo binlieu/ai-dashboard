@@ -2,6 +2,7 @@ import http.client
 import io
 import os
 from pathlib import Path
+import socket
 import ssl
 import stat
 import tempfile
@@ -81,14 +82,21 @@ class Go2RTCTests(unittest.TestCase):
 
     def test_stop_without_start_leaves_a_running_instances_socket(self):
         # A second ./start.sh that fails on the port must not unlink the live socket.
-        import socket as socket_module
         first = Go2RTC(self.repo, 'user@example.com', 'secret')
-        listener = socket_module.socket(socket_module.AF_UNIX, socket_module.SOCK_STREAM)
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.addCleanup(listener.close)
-        listener.bind(str(first.socket_path))
+        try:
+            listener.bind(str(first.socket_path))
+        except PermissionError:
+            bound = False
+        else:
+            bound = True
         second = Go2RTC(self.repo, 'user@example.com', 'secret')
-        second.stop()
-        self.assertTrue(stat.S_ISSOCK(os.stat(str(first.socket_path)).st_mode))
+        with patch('app.go2rtc.remove_socket', wraps=remove_socket) as remove:
+            second.stop()
+            remove.assert_not_called()
+        if bound:
+            self.assertTrue(stat.S_ISSOCK(os.stat(str(first.socket_path)).st_mode))
 
     def test_apply_rewrites_config_before_every_spawn(self):
         snapshots, children = [], []
@@ -169,6 +177,45 @@ class Go2RTCTests(unittest.TestCase):
                          [('GET', '/api/streams'), ('GET', '/api/frame.jpeg?src=cam1')])
         with patch('app.go2rtc.MAX_FRAME', 3), self.assertRaises(Go2RTCError):
             client.frame('cam1')
+
+    def test_mp4_stream_decodes_chunked_response_and_closes_the_connection(self):
+        from app.go2rtc import UnixHTTPConnection
+
+        client_socket, upstream = socket.socketpair()
+        self.addCleanup(upstream.close)
+        self.addCleanup(client_socket.close)
+        connection = UnixHTTPConnection(self.repo / 'fake.sock')
+        connection.sock = client_socket
+        client_socket.settimeout(1)
+        upstream.settimeout(1)
+        client = UnixHTTPClient(self.repo / 'fake.sock', connection_factory=Mock(return_value=connection))
+        bridge = Go2RTC(self.repo, 'placeholder@example.com', 'placeholder', client=client)
+        self.addCleanup(bridge.stop)
+        upstream.sendall(b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n'
+                         b'3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n')
+        stream = bridge.open_mp4('cam4')
+        self.addCleanup(stream.close)
+        self.assertTrue(upstream.recv(4096).startswith(b'GET /api/stream.mp4?src=cam4 HTTP/1.1\r\n'))
+        self.assertEqual(stream.read(4), b'abcd')
+        self.assertEqual(stream.read1(4), b'e')
+        stream.close()
+        self.assertEqual(upstream.recv(1), b'')
+
+    def test_mp4_stream_rejects_invalid_ids_and_unsuccessful_status(self):
+        connection = Mock()
+        response = connection.getresponse.return_value
+        response.status = 503
+        client = UnixHTTPClient(self.repo / 'fake.sock', connection_factory=Mock(return_value=connection))
+        bridge = Go2RTC(self.repo, 'placeholder@example.com', 'placeholder', client=client)
+        self.addCleanup(bridge.stop)
+        with self.assertRaises(ValueError):
+            bridge.open_mp4('cam1&audio=all')
+        client.connection_factory.assert_not_called()
+        with self.assertRaises(Go2RTCError):
+            bridge.open_mp4('cam1')
+        response.close.assert_called_once()
+        response.read.assert_not_called()
+        connection.close.assert_called_once()
 
     def test_camera_probe_statuses_headers_only_and_tls_retry(self):
         for status, expected in ((200, 'ok'), (503, 'busy'), (401, 'auth'), (500, 'unreachable')):

@@ -133,6 +133,15 @@ rename or remove them from the same list. Their status-bar buttons show the
 reported state. Press **On** or **Off** to switch the device, or **?** to refresh
 its state. Anyone using this screen can switch the saved devices.
 
+**Backup:** open **Setup → Backup**, enter the full path to an existing writable
+folder, and choose **Keep 1 day**, **Keep 7 days**, or **Keep 30 days** for each
+camera you want to record. Select **Save backup settings** to apply the choices.
+Shortening retention asks for confirmation before older footage is deleted.
+Choose **Off** to stop recording for a camera and leave its files in place.
+The section shows the estimated storage needed, available drive space, and each
+camera's recording status and last file time. The status bar shows when backup
+is on and when the drive is missing or almost full.
+
 The video area fills the screen above a slim, always-visible status bar with the
 local time, date, and live, offline and connecting counts for the visible cameras.
 Camera labels show a status dot and state in words when video is not live;
@@ -226,6 +235,31 @@ For unattended wall displays the page reloads itself once a day between 04:00
 and 05:00 local time, only while the server answers, and not while Setup or a
 fullscreen tile is open.
 
+## Backup
+
+Select a backup folder and choose 1, 7 or 30 days of retention for each camera
+you want to record. Selected cameras stream continuously while the dashboard is
+running, even when no browser is open. Recordings contain video only, with no
+sound, in 3-minute MP4 files. Allow about 8–15 GB per camera per day.
+
+Choose an existing writable folder outside the dashboard project. The dashboard
+never creates the backup folder itself. Completed files are organized as
+`camN/YYYY-MM-DD/HH-MM-SS.mp4`, using the computer's local time. A file being
+written ends in `.mp4.part`. Changing folders leaves the previous recordings
+where they are. If the drive is disconnected, recording resumes after it
+becomes available again.
+Backup supports drives formatted as exFAT or FAT.
+When the status bar says **Backup: files not saving**, a camera has failed to
+save two consecutive recordings and the dashboard is still trying.
+
+The dashboard removes recordings older than each enabled camera's retention
+period. When free space drops below 5 GiB, it removes older recordings early,
+oldest first, while always keeping the last 24 hours. Recording pauses if it
+still cannot free enough space.
+Cleanup is limited to the dashboard's own recording files and empty date
+folders inside the marked backup folder. Disabling or removing a camera leaves
+its recordings in place.
+
 ## Same-origin API
 
 The dashboard uses these same-origin endpoints.
@@ -244,6 +278,8 @@ The dashboard uses these same-origin endpoints.
 | PUT | `/api/layout` | JSON `{ "layout": "2x2" }`; allowed: `auto`, `2x1`, `2x2`, `3x3`, `4x4`, `spotlight`. |
 | GET | `/api/weather` | Settings, cached forecast, and `timezone` (zone name when enabled and known, otherwise `null`), with status `off`, `loading`, `ok` or `unavailable`; never exposes coordinates. |
 | PUT | `/api/weather` | JSON `{ "enabled": true, "place": "Springfield", "units": "f" }`; units `f` or `c`. Resolves enabled places and returns the same shape as GET. |
+| GET | `/api/backup` | Saved folder, per-camera retention and recording status, cached disk usage, and any storage warning. |
+| PUT | `/api/backup` | JSON `{ "folder": "/Volumes/Drive/Recordings", "cameras": { "cam1": 7 } }`. Set 1, 7 or 30 days per camera. Use 0 or omit a camera to turn its recording off. Returns the same shape as GET. |
 | GET | `/api/frame.jpeg?src=camN` | JPEG relay, capped at 10 MB. |
 | GET | `/api/ws?src=camN` | Same-origin WebSocket upgrade; transparent relay, at most 64 concurrent connections. |
 

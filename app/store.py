@@ -10,6 +10,7 @@ import tempfile
 import threading
 import unicodedata
 
+from .backup import BACKUP_DEFAULTS, valid_folder_text, valid_policies
 from .discovery import normalize_mac
 from .envfile import split_csv
 from .security import CAMERA_ID, DEVICE_ID
@@ -18,6 +19,16 @@ MAX_CAMERAS = 16
 MAX_DEVICES = 6
 LAYOUTS = ("auto", "2x1", "2x2", "3x3", "4x4", "spotlight")
 WEATHER_DEFAULTS = {"enabled": False, "place": "", "units": "f", "name": "", "lat": None, "lon": None}
+
+
+def validate_backup(backup, camera_ids):
+    if not isinstance(backup, dict) or set(backup) != set(BACKUP_DEFAULTS):
+        raise ValueError("Invalid backup settings")
+    folder, cameras = backup["folder"], backup["cameras"]
+    if (not valid_folder_text(folder) or not valid_policies(cameras) or
+            not cameras.keys() <= camera_ids or (cameras and not folder)):
+        raise ValueError("Invalid backup settings")
+    return copy.deepcopy(backup)
 
 
 def validate_weather(weather):
@@ -120,7 +131,7 @@ def validate_state(state, warning=None):
             raise ValueError("Unexpected camera fields")
         ids.add(camera["id"])
         macs.add(mac)
-    if set(state) - {"version", "next_id", "layout", "cameras", "weather", "devices", "next_device_id"}:
+    if set(state) - {"version", "next_id", "layout", "cameras", "weather", "devices", "next_device_id", "backup"}:
         raise ValueError("Unexpected state fields")
     state = copy.deepcopy(state)
     if "weather" in state:
@@ -137,6 +148,13 @@ def validate_state(state, warning=None):
             state["devices"], state["next_device_id"] = [], 1
             if warning:
                 warning("Device settings were invalid and have been reset; cameras were preserved.")
+    if "backup" in state:
+        try:
+            state["backup"] = validate_backup(state["backup"], ids)
+        except ValueError:
+            state["backup"] = copy.deepcopy(BACKUP_DEFAULTS)
+            if warning:
+                warning("Backup settings were invalid and have been reset; cameras were preserved.")
     return state
 
 
@@ -162,6 +180,7 @@ class CameraStore:
     def __init__(self, path, seed=None, warning=print):
         self.path = Path(path)
         self.lock = threading.RLock()
+        self._backup_revision = 0
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(self.path.parent, 0o700)
         if self.path.exists():
@@ -170,6 +189,7 @@ class CameraStore:
                 loaded = json.loads(self.path.read_text(encoding="utf-8"))
                 self._state = validate_state(loaded, warning)
                 if (("weather" in loaded and loaded["weather"] != self._state["weather"]) or
+                        ("backup" in loaded and loaded["backup"] != self._state["backup"]) or
                         ("devices" in self._state and
                          (loaded.get("devices") != self._state["devices"] or
                           type(loaded.get("next_device_id")) is not int or
@@ -197,10 +217,10 @@ class CameraStore:
         with self.lock:
             return copy.deepcopy(self._state)
 
-    def restore(self, state):
+    def restore(self, state, *, backup_revision=None):
         with self.lock:
             state = validate_state(state)
-            # Camera rollback must preserve weather and device saves made during bridge I/O.
+            # Camera rollback preserves independent settings saves made during bridge I/O.
             if "weather" in self._state:
                 state["weather"] = copy.deepcopy(self._state["weather"])
             if "devices" in self._state:
@@ -209,6 +229,12 @@ class CameraStore:
                 camera_macs = {camera["mac"] for camera in state["cameras"]}
                 if any(device["mac"] in camera_macs for device in state["devices"]):
                     raise StoreError("duplicate", "That MAC address is already configured as a device.", 409)
+            if "backup" in self._state and backup_revision != self._backup_revision:
+                backup = copy.deepcopy(self._state["backup"])
+                camera_ids = {camera["id"] for camera in state["cameras"]}
+                backup["cameras"] = {camera_id: days for camera_id, days in backup["cameras"].items()
+                                     if camera_id in camera_ids}
+                state["backup"] = backup
             state["next_id"] = max(state["next_id"], self._state["next_id"])
             self._commit(state)
 
@@ -222,6 +248,18 @@ class CameraStore:
             state = self.snapshot()
             state["weather"] = weather
             self._commit(state)
+
+    def get_backup(self):
+        with self.lock:
+            return copy.deepcopy(self._state.get("backup", BACKUP_DEFAULTS))
+
+    def set_backup(self, backup):
+        with self.lock:
+            state = self.snapshot()
+            state["backup"] = validate_backup(backup, {camera["id"] for camera in state["cameras"]})
+            self._commit(state)
+            self._backup_revision += 1
+            return copy.deepcopy(state["backup"])
 
     def check_add(self, mac, name=None):
         with self.lock:
@@ -262,7 +300,10 @@ class CameraStore:
             if not any(camera["id"] == camera_id for camera in state["cameras"]):
                 raise StoreError("not_found", "Camera not found.", 404)
             state["cameras"] = [camera for camera in state["cameras"] if camera["id"] != camera_id]
+            if "backup" in state:
+                state["backup"]["cameras"].pop(camera_id, None)
             self._commit(state)
+            return self._backup_revision
 
     def set_layout(self, layout):
         with self.lock:

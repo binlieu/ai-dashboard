@@ -9,6 +9,7 @@ import sys
 import threading
 import webbrowser
 
+from .backup import BackupService
 from .discovery import resolve_cameras, sweep_local_network
 from .devices import DeviceService
 from .envfile import b64, env_get
@@ -25,7 +26,7 @@ def main(argv=None, repo=None):
     arguments = parser.parse_args(argv)
     repo = Path(repo).resolve() if repo is not None else Path(__file__).resolve().parent.parent
     os.chdir(repo)
-    bridge = server = application = thread = weather = None
+    bridge = server = application = thread = weather = backup = None
     stopped = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda number, frame: stopped.set())
@@ -51,7 +52,9 @@ def main(argv=None, repo=None):
         bridge = Go2RTC(repo, user, password)
         weather = WeatherService(store)
         devices = DeviceService(store, DeviceClient(user, password))
-        application = DashboardApplication(store, bridge, user, b64(password), weather=weather, devices=devices)
+        backup = BackupService(store, bridge.open_mp4, (repo,))
+        application = DashboardApplication(store, bridge, user, b64(password),
+                                           weather=weather, devices=devices, backup=backup)
         # Reserve the public port before any camera connection is opened.
         server = DashboardServer(("127.0.0.1", port), application, repo / "www")
         cameras = resolve_cameras(store.snapshot()["cameras"], sweep=sweep_local_network)
@@ -59,6 +62,7 @@ def main(argv=None, repo=None):
         if stopped.is_set():
             return 0
         bridge.start(cameras)
+        backup.start()
         application.start_background()
         weather.start()
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -88,6 +92,8 @@ def main(argv=None, repo=None):
             if thread is not None:
                 server.shutdown()
             server.server_close()
+        if backup is not None:
+            backup.stop()
         if application is not None:
             application.stop_background()
         if bridge is not None:

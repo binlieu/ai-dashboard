@@ -37,6 +37,14 @@ const deviceList = find('#setup-device-list');
 const deviceForm = find('#add-device-form');
 const deviceMac = find('#device-mac');
 const deviceName = find('#device-name');
+const backupSection = find('#setup-backup');
+const backupForm = find('#backup-form');
+const backupFields = find('#backup-fields');
+const backupFolder = find('#backup-folder');
+const backupList = find('#backup-camera-list');
+const backupSave = find('#backup-save');
+const backupError = find('#backup-error');
+const backupConfirmation = find('#backup-confirmation');
 const rotationValues = ['0', '10', '30', '60', '300'];
 const layoutButtons = [...document.querySelectorAll('.layout-options button')];
 const mobile = matchMedia('(max-width: 699px)');
@@ -55,6 +63,19 @@ let deviceSetupRevision = 0;
 let deviceRead = null;
 let nextDeviceRead = 0;
 let deviceNoticeUntil = 0;
+const backupRows = new Map();
+const backupStates = {
+    recording: 'Recording', waiting: 'Waiting for video', no_folder: 'No folder',
+    low_space: 'Drive almost full', save_failed: 'Not saving files', off: 'Off',
+};
+const backupWarnings = {folder_missing: 'Backup: drive missing', low_space: 'Backup: drive almost full', save_failed: 'Backup: files not saving'};
+const backupSizeFormat = new Intl.NumberFormat(undefined, {maximumSignificantDigits: 2});
+const backupTimeFormat = new Intl.DateTimeFormat(undefined, {hour: '2-digit', minute: '2-digit', hourCycle: 'h23'});
+let backupData = null;
+let backupSaving = false;
+let pendingBackup = null;
+let backupRead = null;
+let lastBackupReadAt = -Infinity;
 const state = {
     cameras: [], max: 16, loaded: false, layout: 'auto', page: 0, pageCount: 1,
     visible: [], busy: false, videoChangePending: false, restartUntil: 0,
@@ -771,6 +792,7 @@ class SetupRow {
             const camera = await request(`api/cameras/${encodeURIComponent(this.camera.id)}`, {method: 'PATCH', body: {name}});
             state.cameraRevision++;
             reconcile(state.cameras.map(item => item.id === camera.id ? camera : item));
+            refreshBackup(true);
             this.cancel();
             saved = true;
             announce(`Renamed to ${camera.name}.`);
@@ -796,6 +818,7 @@ class SetupRow {
             state.cameraRevision++;
             beginRestart();
             reconcile(state.cameras.filter(camera => camera.id !== id));
+            refreshBackup(true);
             announce(`Removed ${name}.`);
             await refreshAfterMutation();
             if (setupDialog.open) find('#close-setup').focus();
@@ -1109,6 +1132,194 @@ function deviceTick() {
     loadDevices();
 }
 
+function validBackup(data) {
+    return data && typeof data.folder === 'string' && Array.isArray(data.cameras) &&
+        data.cameras.every(camera => camera && typeof camera.id === 'string' && /^cam[1-9][0-9]{0,3}$/.test(camera.id) &&
+            typeof camera.name === 'string' && [0, 1, 7, 30].includes(camera.days) &&
+            Object.hasOwn(backupStates, camera.state)) &&
+        new Set(data.cameras.map(camera => camera.id)).size === data.cameras.length;
+}
+
+function formatBackupSize(bytes) {
+    const gb = bytes / 1e9;
+    return gb > 1000 ? `${backupSizeFormat.format(gb / 1000)} TB` : `${backupSizeFormat.format(gb)} GB`;
+}
+
+function renderBackupSizes() {
+    const days = Array.from(backupRows.values(), row => Number(row.picker.value));
+    const estimate = days.reduce((sum, value) => sum + value, 0) * 12e9;
+    const {free_bytes: free, total_bytes: total, used_bytes: used} = backupData;
+    find('#backup-estimate').textContent = `Needs roughly ${formatBackupSize(estimate)}`;
+    find('#backup-free').textContent = Number.isFinite(free)
+        ? `Free: ${formatBackupSize(free)}${Number.isFinite(total) ? ` of ${formatBackupSize(total)}` : ''}` : '';
+    find('#backup-used').textContent = Number.isFinite(used) ? `Used by backups: ${formatBackupSize(used)}` : '';
+    find('#backup-space-note').hidden = !Number.isFinite(free) || estimate <= free;
+}
+
+function clearBackupConfirmation() {
+    pendingBackup = null;
+    backupConfirmation.hidden = true;
+}
+
+function renderBackup(data, saved = false) {
+    if (!validBackup(data)) throw new ApiError('Backup settings are unavailable.');
+    const keepDraft = !saved && backupData && (backupFolder.value !== backupData.folder ||
+        backupData.cameras.some(({id, days}) => Number(backupRows.get(id).picker.value) !== days));
+    if (pendingBackup && (data.folder !== backupData.folder || data.cameras.length !== backupData.cameras.length ||
+        data.cameras.some(({id, name, days}, index) => {
+            const previous = backupData.cameras[index];
+            return id !== previous.id || name !== previous.name || days !== previous.days;
+        }))) clearBackupConfirmation();
+    if (!backupData) backupError.textContent = '';
+    backupData = data;
+    backupSection.hidden = false;
+    backupFields.disabled = backupSaving;
+    if (!keepDraft && backupFolder.value !== data.folder) backupFolder.value = data.folder;
+
+    const ids = new Set(data.cameras.map(camera => camera.id));
+    for (const [id, row] of backupRows) {
+        if (!ids.has(id)) {
+            row.node.remove();
+            backupRows.delete(id);
+        }
+    }
+    data.cameras.forEach((camera, index) => {
+        let row = backupRows.get(camera.id);
+        if (!row) {
+            const node = find('#backup-camera-template').content.firstElementChild.cloneNode(true);
+            const picker = node.querySelector('select');
+            const label = node.querySelector('label');
+            const status = node.querySelector('.backup-state');
+            const last = node.querySelector('.backup-last');
+            picker.id = `backup-retention-${camera.id}`;
+            label.htmlFor = picker.id;
+            picker.value = String(camera.days);
+            row = {node, picker, label, status, last};
+            backupRows.set(camera.id, row);
+        }
+        if (!keepDraft && row.picker.value !== String(camera.days)) row.picker.value = String(camera.days);
+        row.label.textContent = camera.name;
+        row.status.textContent = backupStates[camera.state];
+        row.status.dataset.state = camera.state;
+        const lastTime = typeof camera.last === 'string' ? Date.parse(camera.last) : NaN;
+        row.last.hidden = !Number.isFinite(lastTime);
+        if (!row.last.hidden) {
+            row.last.dateTime = camera.last;
+            row.last.textContent = `Last file ${backupTimeFormat.format(lastTime)}`;
+        }
+        placeNode(backupList, row.node, index);
+    });
+    renderBackupSizes();
+
+    const indicator = find('#backup-indicator');
+    const warning = Object.hasOwn(backupWarnings, data.warning) ? backupWarnings[data.warning] : '';
+    const label = data.cameras.some(camera => camera.days) ? warning || 'Backup on' : '';
+    indicator.hidden = !label;
+    indicator.classList.toggle('backup-warning', Boolean(warning));
+    if (indicator.textContent !== label) indicator.textContent = label;
+}
+
+function hideBackup() {
+    clearBackupConfirmation();
+    backupSection.hidden = true;
+    find('#backup-indicator').hidden = true;
+}
+
+async function refreshBackup(fresh = false) {
+    if (fresh) clearBackupConfirmation();
+    if (backupSaving) {
+        if (fresh) lastBackupReadAt = -Infinity;
+        return;
+    }
+    if (backupRead && !fresh) return;
+    backupRead?.abort();
+    const controller = new AbortController();
+    backupRead = controller;
+    lastBackupReadAt = performance.now();
+    try {
+        const data = await request('api/backup', {signal: controller.signal});
+        if (backupRead === controller) renderBackup(data);
+    } catch (error) {
+        if (backupRead !== controller) return;
+        if (error.status === 404) hideBackup();
+        else if (!backupData) backupError.textContent = error.message;
+    } finally {
+        if (backupRead === controller) backupRead = null;
+    }
+}
+
+function backupTick() {
+    const delay = setupDialog.open ? 15000 : 60000;
+    if (performance.now() - lastBackupReadAt >= delay) refreshBackup();
+}
+
+function validateBackupFolder() {
+    const missing = !backupFolder.value.trim() && Array.from(backupRows.values()).some(row => Number(row.picker.value));
+    backupError.textContent = missing ? 'Enter a storage folder first.' : '';
+    if (missing) backupFolder.setAttribute('aria-invalid', 'true');
+    else backupFolder.removeAttribute('aria-invalid');
+    return !missing;
+}
+
+function editBackup() {
+    clearBackupConfirmation();
+    validateBackupFolder();
+    renderBackupSizes();
+}
+
+function submitBackup(event) {
+    event.preventDefault();
+    if (!backupData || backupSaving || backupSection.hidden) return;
+    if (!validateBackupFolder()) {
+        backupFolder.focus();
+        return;
+    }
+    const cameras = Object.fromEntries(backupData.cameras.map(({id}) => [id, Number(backupRows.get(id).picker.value)]));
+    const body = {folder: backupFolder.value, cameras};
+    const shortening = backupData.cameras.filter(({id, days}) => cameras[id] > 0 && cameras[id] < days);
+    if (!shortening.length) {
+        saveBackup(body);
+        return;
+    }
+    const notices = shortening.map(({id, name}) => {
+        const days = cameras[id];
+        const notice = document.createElement('p');
+        notice.textContent = `${name} will keep only ${days} ${days === 1 ? 'day' : 'days'}. Older recordings are deleted now.`;
+        return notice;
+    });
+    find('#backup-confirmation-text').replaceChildren(...notices);
+    pendingBackup = body;
+    backupConfirmation.hidden = false;
+    find('#backup-cancel').focus();
+}
+
+async function saveBackup(body) {
+    if (backupSaving || backupSection.hidden) return;
+    const restoreFocus = backupForm.contains(document.activeElement);
+    backupSaving = true;
+    backupRead?.abort();
+    backupRead = null;
+    clearBackupConfirmation();
+    backupError.textContent = '';
+    backupFields.disabled = true;
+    backupForm.setAttribute('aria-busy', 'true');
+    backupSave.textContent = 'Saving backup settings…';
+    try {
+        const data = await request('api/backup', {method: 'PUT', body});
+        renderBackup(data, true);
+        announce('Backup settings saved.');
+    } catch (error) {
+        if (error.status === 404) hideBackup();
+        else backupError.textContent = error.message;
+    } finally {
+        backupSaving = false;
+        backupFields.disabled = false;
+        backupForm.removeAttribute('aria-busy');
+        backupSave.textContent = 'Save backup settings';
+        if (restoreFocus && setupDialog.open && !backupSection.hidden && document.activeElement === document.body) backupSave.focus();
+    }
+}
+
 function reconcile(cameras) {
     const ids = new Set(cameras.map(camera => camera.id));
     for (const [id, tile] of tiles) {
@@ -1371,6 +1582,7 @@ async function addCamera(event) {
         state.cameraRevision++;
         beginRestart();
         reconcile([...state.cameras, camera]);
+        refreshBackup(true);
         addForm.reset();
         macInput.removeAttribute('aria-invalid');
         announce(`Added ${camera.name}.`);
@@ -1428,6 +1640,7 @@ function openSetup() {
     setupDialog.showModal();
     find('#weather-error').textContent = '';
     loadWeatherSettings();
+    refreshBackup(true);
     activate();
     (find('#add-fields').disabled ? find('#close-setup') : macInput).focus();
 }
@@ -1441,6 +1654,7 @@ setupButton.addEventListener('click', openSetup);
 find('#empty-setup').addEventListener('click', openSetup);
 find('#close-setup').addEventListener('click', () => setupDialog.close());
 setupDialog.addEventListener('close', () => {
+    clearBackupConfirmation();
     resetRotation();
     activate();
     setupButton.focus();
@@ -1457,6 +1671,16 @@ themeSelect.addEventListener('change', () => {
 });
 weatherForm.addEventListener('submit', saveWeather);
 weatherForm.addEventListener('input', () => { weatherFormRevision++; });
+backupForm.addEventListener('submit', submitBackup);
+backupFolder.addEventListener('input', editBackup);
+backupList.addEventListener('change', editBackup);
+find('#backup-confirm').addEventListener('click', () => {
+    if (pendingBackup) saveBackup(pendingBackup);
+});
+find('#backup-cancel').addEventListener('click', () => {
+    clearBackupConfirmation();
+    backupSave.focus();
+});
 addForm.addEventListener('submit', addCamera);
 deviceForm.addEventListener('submit', addDevice);
 deviceMac.addEventListener('input', () => {
@@ -1538,12 +1762,14 @@ function dailyReload() {
 updateClock();
 weatherTick();
 deviceTick();
+backupTick();
 updateActivity();
 loadCameras();
 setInterval(() => {
     updateClock();
     weatherTick();
     deviceTick();
+    backupTick();
     dailyReload();
     tiles.forEach(tile => tile.updatePlaybackStatus());
     rotateSpotlight();
