@@ -66,9 +66,9 @@ let deviceNoticeUntil = 0;
 const backupRows = new Map();
 const backupStates = {
     recording: 'Recording', waiting: 'Waiting for video', no_folder: 'No folder',
-    low_space: 'Drive almost full', off: 'Off',
+    low_space: 'Drive almost full', save_failed: 'Not saving files', off: 'Off',
 };
-const backupWarnings = {folder_missing: 'Backup: drive missing', low_space: 'Backup: drive almost full'};
+const backupWarnings = {folder_missing: 'Backup: drive missing', low_space: 'Backup: drive almost full', save_failed: 'Backup: files not saving'};
 const backupSizeFormat = new Intl.NumberFormat(undefined, {maximumSignificantDigits: 2});
 const backupTimeFormat = new Intl.DateTimeFormat(undefined, {hour: '2-digit', minute: '2-digit', hourCycle: 'h23'});
 let backupData = null;

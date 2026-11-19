@@ -1,4 +1,6 @@
+from contextlib import contextmanager
 import datetime
+import errno
 import os
 from pathlib import Path
 import queue
@@ -25,6 +27,20 @@ HEADER = box(b'ftyp') + box(b'moov')
 MOOF = box(b'moof')
 VIDEO = box(b'mdat', b'placeholder')
 PAIR = MOOF + VIDEO
+
+
+def companion(path):
+    return path.with_name('._' + path.name)
+
+
+@contextmanager
+def fat_volume(link_error=errno.ENOTSUP):
+    rename = Mock(return_value=-1)
+    libc = Mock(renameatx_np=rename, renameat2=rename)
+    with patch('app.backup.ctypes.CDLL', return_value=libc), \
+            patch('app.backup.ctypes.get_errno', return_value=errno.ENOTSUP), \
+            patch('app.backup.os.link', side_effect=OSError(link_error, 'synthetic link failure')) as link:
+        yield rename, link
 
 
 class FakeStream:
@@ -89,6 +105,44 @@ class BackupTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         return written
+
+    def assert_awaits_worker(self, action, worker, blocked, release, final):
+        joining, result = threading.Event(), queue.Queue()
+        original_join = worker.thread.join
+
+        def join(timeout):
+            joining.set()
+            original_join(timeout)
+
+        def run():
+            action()
+            result.put(final.is_file())
+
+        caller = threading.Thread(target=run, daemon=True)
+        with patch.object(worker.thread, 'join', side_effect=join):
+            caller.start()
+            try:
+                self.assertTrue(blocked.wait(1))
+                self.assertTrue(joining.wait(1))
+                self.assertTrue(caller.is_alive())
+            finally:
+                release.set()
+                caller.join(1)
+        self.assertTrue(result.get(timeout=1))
+        self.assertFalse(worker.thread.is_alive())
+
+    def assert_awaits_slow_rename(self, action, worker, final):
+        renaming, release = threading.Event(), threading.Event()
+        original_rename = os.rename
+
+        def rename(*args, **kwargs):
+            renaming.set()
+            if not release.wait(2):
+                raise OSError('Synthetic rename was not released')
+            return original_rename(*args, **kwargs)
+
+        with fat_volume(), patch('app.backup.os.rename', side_effect=rename):
+            self.assert_awaits_worker(action, worker, renaming, release, final)
 
     def test_configure_marks_only_valid_folders_and_preserves_existing_readme(self):
         service = self.make_service()
@@ -233,6 +287,242 @@ class BackupTests(unittest.TestCase):
         self.assertEqual(next_partial.read_bytes(), b'keep this partial')
         self.assertEqual(path.with_name('12-00-02.mp4').read_bytes(), HEADER + PAIR)
 
+    def test_fat_volume_uses_plain_rename_and_removes_the_partial_companion(self):
+        final = self.root / '12-00-00.mp4'
+        partial = final.with_suffix('.mp4.part')
+        partial.write_bytes(HEADER + PAIR)
+        companion(partial).write_bytes(b'synthetic metadata')
+        with backup._directory(self.root) as date_fd, fat_volume() as (exclusive, link), \
+                patch('app.backup.os.rename', wraps=os.rename) as rename:
+            self.assertTrue(backup._publish(partial.name, final.name, date_fd, date_fd))
+            exclusive.assert_called_once()
+            link.assert_called_once()
+            rename.assert_called_once_with(partial.name, final.name, src_dir_fd=date_fd, dst_dir_fd=date_fd)
+        self.assertEqual(final.read_bytes(), HEADER + PAIR)
+        self.assertFalse(partial.exists())
+        self.assertFalse(companion(partial).exists())
+
+    def test_fat_volume_collision_leaves_existing_recording_and_complete_partial(self):
+        written = self.watch_pairs()
+        service = self.make_service()
+        stream = FakeStream()
+        self.sources.put(stream)
+        self.configure(service)
+        with fat_volume(), patch('app.backup.os.rename', wraps=os.rename) as rename:
+            service.start()
+            stream.feed(HEADER + PAIR)
+            final = written.get(timeout=1)
+            final.write_bytes(b'existing recording')
+            service.stop()
+            rename.assert_not_called()
+        partial = final.with_suffix('.mp4.part')
+        self.assertEqual(final.read_bytes(), b'existing recording')
+        self.assertEqual(partial.read_bytes(), HEADER + PAIR)
+        self.assertEqual(set(final.parent.iterdir()), {final, partial})
+        self.assertIsNone(service.status()['cameras'][0]['last'])
+
+    def test_fat_volume_treats_a_dangling_symlink_as_an_existing_final_name(self):
+        final = self.root / '12-00-00.mp4'
+        final.symlink_to(self.root / 'missing')
+        partial = final.with_suffix('.mp4.part')
+        partial.write_bytes(HEADER + PAIR)
+        with backup._directory(self.root) as date_fd, fat_volume(), \
+                patch('app.backup.os.rename', wraps=os.rename) as rename:
+            self.assertFalse(backup._publish(partial.name, final.name, date_fd, date_fd))
+            rename.assert_not_called()
+        self.assertTrue(final.is_symlink())
+        self.assertEqual(partial.read_bytes(), HEADER + PAIR)
+
+    def test_publish_does_not_fall_back_to_plain_rename_on_link_io_error(self):
+        final = self.root / '12-00-00.mp4'
+        partial = final.with_suffix('.mp4.part')
+        partial.write_bytes(HEADER + PAIR)
+        with backup._directory(self.root) as date_fd, fat_volume(errno.EIO), \
+                patch('app.backup.os.rename', wraps=os.rename) as rename:
+            with self.assertRaises(OSError) as caught:
+                backup._publish(partial.name, final.name, date_fd, date_fd)
+            self.assertEqual(caught.exception.errno, errno.EIO)
+            rename.assert_not_called()
+        self.assertEqual(partial.read_bytes(), HEADER + PAIR)
+        self.assertFalse(final.exists())
+
+    def test_failed_finalize_leaves_partial_and_next_segment_records(self):
+        written = self.watch_pairs()
+        service = self.make_service(segment_seconds=12)
+        first, second = FakeStream(), FakeStream()
+        self.sources.put(first)
+        self.sources.put(second)
+        self.configure(service)
+        original = backup._publish
+        first_name = segment_path(self.root, 'cam1', NOW).with_suffix('.mp4.part').name
+
+        def publish(partial, final, source_fd, destination_fd):
+            if partial == first_name:
+                raise OSError(errno.EIO, 'synthetic finalization failure')
+            return original(partial, final, source_fd, destination_fd)
+
+        with patch.object(backup, '_publish', side_effect=publish):
+            service.start()
+            self.assertEqual(self.opened.get(timeout=1), 'cam1')
+            first.feed(HEADER + PAIR)
+            first_path = written.get(timeout=1)
+            self.elapsed = 12
+            first.feed(b'\x00')
+            self.assertEqual(self.opened.get(timeout=1), 'cam1')
+            second.feed(HEADER + PAIR)
+            next_path = written.get(timeout=1)
+            self.assertNotEqual(next_path, first_path)
+            self.assertIsNone(service.status()['cameras'][0]['last'])
+            service.stop()
+        partial = first_path.with_suffix('.mp4.part')
+        self.assertFalse(first_path.exists())
+        self.assertEqual(partial.read_bytes(), HEADER + PAIR)
+        self.assertEqual(next_path.read_bytes(), HEADER + PAIR)
+        self.assertEqual(service.status()['cameras'][0]['last'], NOW.isoformat())
+        removed = prune(self.root, {'cam1': 7}, NOW + datetime.timedelta(hours=2), lambda: PLENTY, MIN_FREE_BYTES)
+        self.assertEqual(removed, [partial])
+        self.assertTrue(next_path.exists())
+
+    def test_stop_waits_for_slow_finalization(self):
+        written = self.watch_pairs()
+        service = self.make_service()
+        stream = FakeStream()
+        self.sources.put(stream)
+        self.configure(service)
+        service.start()
+        stream.feed(HEADER + PAIR)
+        final = written.get(timeout=1)
+
+        self.assert_awaits_slow_rename(service.stop, service._workers['cam1'], final)
+        self.assertEqual(final.read_bytes(), HEADER + PAIR)
+        self.assertFalse(final.with_suffix('.mp4.part').exists())
+
+    def test_stop_joins_a_worker_that_has_released_its_camera_slot(self):
+        written = self.watch_pairs()
+        service = self.make_service(wait=lambda delay: True)
+        stream = FakeStream()
+        self.sources.put(stream)
+        self.configure(service)
+        finishing, release, maintained = threading.Event(), threading.Event(), threading.Event()
+        original_work = service._work
+
+        def work(worker):
+            original_work(worker)
+            finishing.set()
+            release.wait(2)
+
+        self.addCleanup(release.set)
+        with patch.object(service, '_work', side_effect=work), \
+                patch.object(service, '_maintenance_pass', side_effect=maintained.set):
+            service.start()
+            self.assertTrue(maintained.wait(1))
+            worker = service._workers['cam1']
+            stream.feed(HEADER + PAIR)
+            final = written.get(timeout=1)
+            stream.feed(b'')
+            self.assertTrue(finishing.wait(1))
+            self.assertNotIn('cam1', service._workers)
+            self.assert_awaits_worker(service.stop, worker, finishing, release, final)
+
+    def test_configure_waits_for_old_file_on_folder_change_and_turning_off(self):
+        written = self.watch_pairs()
+        service = self.make_service()
+        first, second = FakeStream(), FakeStream()
+        self.sources.put(first)
+        self.sources.put(second)
+        self.configure(service)
+        new = self.base / 'new'
+        new.mkdir()
+        service.start()
+        first.feed(HEADER + PAIR)
+        first_final = written.get(timeout=1)
+
+        self.assert_awaits_slow_rename(lambda: self.configure(service, folder=new),
+                                      service._workers['cam1'], first_final)
+        second.feed(HEADER + PAIR)
+        second_final = written.get(timeout=1)
+        self.assertEqual(second_final, segment_path(new, 'cam1', NOW))
+        self.assert_awaits_slow_rename(lambda: self.configure(service, {'cam1': 0}, folder=new),
+                                      service._workers['cam1'], second_final)
+        self.assertEqual(first_final.read_bytes(), HEADER + PAIR)
+        self.assertEqual(second_final.read_bytes(), HEADER + PAIR)
+        self.assertEqual(service.status()['cameras'][0]['state'], 'off')
+
+    def test_two_unsaved_segments_warn_until_a_segment_saves(self):
+        written = self.watch_pairs()
+        service = self.make_service(segment_seconds=12)
+        streams = [FakeStream() for _ in range(4)]
+        for stream in streams:
+            self.sources.put(stream)
+        self.configure(service)
+        publish = backup._publish
+        outcomes = iter((False, RuntimeError('synthetic finalization failure'), True, True))
+
+        def publish_with_failures(*args):
+            saved = next(outcomes)
+            if isinstance(saved, Exception):
+                raise saved
+            return publish(*args) if saved else False
+
+        with patch.object(backup, '_publish', side_effect=publish_with_failures):
+            service.start()
+            self.assertEqual(self.opened.get(timeout=1), 'cam1')
+            streams[0].feed(HEADER + PAIR)
+            paths = [written.get(timeout=1)]
+            for previous, current, warning in zip(streams, streams[1:], (None, 'save_failed', None)):
+                self.elapsed += 12
+                previous.feed(b'\x00')
+                self.assertEqual(self.opened.get(timeout=1), 'cam1')
+                current.feed(HEADER + PAIR)
+                paths.append(written.get(timeout=1))
+                status = service.status()
+                self.assertEqual(status['cameras'][0]['state'], warning or 'recording')
+                self.assertEqual(status['cameras'][1]['state'], 'off')
+                self.assertEqual(status['warning'], warning)
+                if warning:
+                    self.assertIsNone(status['cameras'][0]['last'])
+                    # Exercise the status priorities before allowing the worker to write again.
+                    with service._lock:
+                        for storage_warning in ('low_space', 'folder_missing', None):
+                            service._storage_status(str(self.root), PLENTY, None, storage_warning)
+                            self.assertEqual(service.status()['warning'], storage_warning or 'save_failed')
+            self.assertEqual(service.status()['cameras'][0]['last'], NOW.isoformat())
+            service.stop()
+        for path in paths[:2]:
+            self.assertFalse(path.exists())
+            self.assertEqual(path.with_suffix('.mp4.part').read_bytes(), HEADER + PAIR)
+        for path in paths[2:]:
+            self.assertEqual(path.read_bytes(), HEADER + PAIR)
+
+    def test_failed_first_write_cleans_up_empty_partial_and_its_companion(self):
+        delays = queue.Queue()
+        service = self.make_service(wait=lambda delay: delays.put(delay) or True)
+        stream = FakeStream()
+        self.sources.put(stream)
+        self.configure(service)
+
+        def fail_write(segment, data):
+            companion(segment.partial).write_bytes(b'synthetic metadata')
+            file = segment._file
+
+            def fail_close():
+                file.close()
+                raise OSError(errno.EIO, 'synthetic close failure')
+
+            segment._file = Mock(wraps=file)
+            segment._file.close.side_effect = fail_close
+            raise OSError(errno.ENODEV, 'synthetic write failure')
+
+        with patch.object(backup._Segment, '_write', fail_write):
+            service.start()
+            stream.feed(HEADER + PAIR)
+            self.assertEqual(delays.get(timeout=1), 5)
+        service.stop()
+        final = segment_path(self.root, 'cam1', NOW)
+        self.assertFalse(final.exists())
+        self.assertFalse(final.with_suffix('.mp4.part').exists())
+        self.assertFalse(companion(final.with_suffix('.mp4.part')).exists())
+
     def test_eof_without_full_fragment_discards_partial_and_backs_off(self):
         delays = queue.Queue()
         retry = [5, 10, 20, 40, 60, 60, 60]
@@ -368,10 +658,13 @@ class BackupTests(unittest.TestCase):
         for path in (expired, retained, disabled):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(PAIR)
+            companion(path).write_bytes(b'synthetic metadata')
         service._maintenance_pass()
         self.assertFalse(expired.exists())
+        self.assertFalse(companion(expired).exists())
         self.assertTrue(old_recording.exists())
         self.assertTrue(disabled.exists())
+        self.assertTrue(companion(disabled).exists())
         self.assertTrue((new / 'README.txt').is_file())
         self.assertEqual(service.status()['used_bytes'], len(PAIR) * 2)
 
@@ -412,3 +705,127 @@ class BackupTests(unittest.TestCase):
         alias.symlink_to(other, target_is_directory=True)
         self.assertEqual(prune(str(alias) + '/', {'cam1': 1}, NOW, lambda: 0, MIN_FREE_BYTES), [])
         self.assertTrue(old.exists() and recording.exists())
+
+    def test_prune_removes_only_companions_of_deleted_recordings_and_orphan_only_dates(self):
+        (self.root / MARKER).touch()
+        expired = segment_path(self.root, 'cam1', NOW - datetime.timedelta(days=8))
+        stale = segment_path(self.root, 'cam1', NOW - datetime.timedelta(hours=2)).with_suffix('.mp4.part')
+        retained = segment_path(self.root, 'cam1', NOW)
+        orphan = segment_path(self.root, 'cam1', NOW - datetime.timedelta(days=2))
+        symlinked = segment_path(self.root, 'cam1', NOW - datetime.timedelta(days=9))
+        unrelated = orphan.parent.with_name('2026-11-12') / '._notes.txt'
+        ds_store = orphan.parent.with_name('2026-11-11') / '.DS_Store'
+        sentinel = self.base / 'target'
+        for recording in (expired, stale, retained, symlinked):
+            recording.parent.mkdir(parents=True, exist_ok=True)
+            recording.touch()
+        sidecars = [companion(path) for path in (expired, stale, retained, orphan, orphan.with_suffix('.mp4.part'))]
+        for path in sidecars + [unrelated, ds_store, sentinel]:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b'synthetic metadata')
+        companion(symlinked).symlink_to(sentinel)
+
+        removed = prune(self.root, {'cam1': 7}, NOW, lambda: PLENTY, MIN_FREE_BYTES)
+        self.assertEqual(removed, [symlinked, expired, stale])
+        self.assertFalse(expired.parent.exists())
+        self.assertFalse(orphan.parent.exists())
+        self.assertFalse(companion(stale).exists())
+        self.assertTrue(companion(retained).exists())
+        self.assertTrue(companion(symlinked).is_symlink())
+        for path in (unrelated, ds_store, sentinel):
+            self.assertEqual(path.read_bytes(), b'synthetic metadata')
+
+
+class PlaceholderIdentityTests(unittest.TestCase):
+    """exFAT gives a new empty file a placeholder inode that changes once data is written."""
+
+    def test_segment_is_finalised_when_the_creation_identity_was_a_placeholder(self):
+        import datetime
+        import os
+        import struct
+        import tempfile
+        from pathlib import Path
+        from app import backup
+
+        def box(kind, size):
+            return struct.pack(">I4s", size, kind) + bytes(size - 8)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            other = root / "other"
+            other.write_bytes(b"x")
+            root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                segment = backup._Segment(root, "cam4", datetime.datetime(2026, 1, 1), root_fd,
+                                          bytearray(box(b"ftyp", 24) + box(b"moov", 40)))
+                segment._identity = os.stat(other)
+                segment.box(box(b"moof", 16))
+                segment.box(box(b"mdat", 32))
+                self.assertTrue(segment.finish())
+            finally:
+                os.close(root_fd)
+            self.assertTrue((root / "cam4/2026-01-01/00-00-00.mp4").is_file())
+            self.assertFalse((root / "cam4/2026-01-01/00-00-00.mp4.part").exists())
+
+    def test_segment_is_finalised_when_the_open_file_reports_a_placeholder_inode(self):
+        import datetime
+        import os
+        import struct
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from app import backup
+
+        def box(kind, size):
+            return struct.pack(">I4s", size, kind) + bytes(size - 8)
+
+        real_fstat = os.fstat
+
+        def placeholder_fstat(fd):
+            import types
+            info = real_fstat(fd)
+            fields = {name: getattr(info, name) for name in dir(info) if name.startswith("st_")}
+            fields["st_ino"] = 2 ** 64 - 33
+            return types.SimpleNamespace(**fields)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                with patch.object(backup.os, "fstat", placeholder_fstat):
+                    segment = backup._Segment(root, "cam4", datetime.datetime(2026, 1, 1), root_fd,
+                                              bytearray(box(b"ftyp", 24) + box(b"moov", 40)))
+                    segment.box(box(b"moof", 16))
+                    segment.box(box(b"mdat", 32))
+                    self.assertTrue(segment.finish())
+            finally:
+                os.close(root_fd)
+            self.assertTrue((root / "cam4/2026-01-01/00-00-00.mp4").is_file())
+
+    def test_a_replaced_partial_is_not_published(self):
+        import datetime
+        import os
+        import struct
+        import tempfile
+        from pathlib import Path
+        from app import backup
+
+        def box(kind, size):
+            return struct.pack(">I4s", size, kind) + bytes(size - 8)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                segment = backup._Segment(root, "cam4", datetime.datetime(2026, 1, 1), root_fd,
+                                          bytearray(box(b"ftyp", 24) + box(b"moov", 40)))
+                segment.box(box(b"moof", 16))
+                segment.box(box(b"mdat", 32))
+                partial = root / "cam4/2026-01-01/00-00-00.mp4.part"
+                partial.unlink()
+                partial.write_bytes(b"someone else's file, different size")
+                self.assertFalse(segment.finish())
+            finally:
+                os.close(root_fd)
+            self.assertFalse((root / "cam4/2026-01-01/00-00-00.mp4").exists())
+            self.assertEqual(partial.read_bytes(), b"someone else's file, different size")

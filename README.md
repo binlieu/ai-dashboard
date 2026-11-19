@@ -248,6 +248,9 @@ never creates the backup folder itself. Completed files are organized as
 written ends in `.mp4.part`. Changing folders leaves the previous recordings
 where they are. If the drive is disconnected, recording resumes after it
 becomes available again.
+Backup supports drives formatted as exFAT or FAT.
+When the status bar says **Backup: files not saving**, a camera has failed to
+save two consecutive recordings and the dashboard is still trying.
 
 The dashboard removes recordings older than each enabled camera's retention
 period. When free space drops below 5 GiB, it removes older recordings early,

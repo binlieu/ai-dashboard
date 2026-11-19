@@ -25,8 +25,9 @@ MIN_FREE_BYTES = 5 * 1024**3
 BACKUP_DEFAULTS = {"folder": "", "cameras": {}}
 MAX_BOX_BYTES = 64 * 1024**2
 STORAGE_RETRY_SECONDS = 30
+STOP_SECONDS = 5
 DATE_NAME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
-SEGMENT_NAME = re.compile(r"([0-9]{2}-[0-9]{2}-[0-9]{2})\.mp4(\.part)?")
+SEGMENT_NAME = re.compile(r"([0-9]{2}-[0-9]{2}-[0-9]{2})\.mp4(?:\.part)?")
 DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 CREATE_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_EXCL
 MESSAGES = {
@@ -138,6 +139,28 @@ def _regular_file(parent, name):
     return info if stat.S_ISREG(info.st_mode) else None
 
 
+def _exists(parent, name):
+    try:
+        os.stat(name, dir_fd=parent, follow_symlinks=False)
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def _remove_companion(parent, name):
+    companion = "._" + name
+    if _regular_file(parent, companion) is not None:
+        try:
+            os.unlink(companion, dir_fd=parent)
+        except OSError:
+            pass
+
+
+def _unlink_recording(parent, name):
+    os.unlink(name, dir_fd=parent)
+    _remove_companion(parent, name)
+
+
 def _dates(root_fd, cameras):
     for camera_id in cameras:
         try:
@@ -153,24 +176,47 @@ def _dates(root_fd, cameras):
             continue
 
 
+def _segment_time(name):
+    match = SEGMENT_NAME.fullmatch(name)
+    if match:
+        try:
+            return datetime.time(*map(int, match[1].split("-")))
+        except ValueError:
+            pass
+    return None
+
+
 def _scan_date(camera_fd, day, tzinfo=None):
     try:
         with _directory(day.isoformat(), camera_fd) as date_fd, os.scandir(date_fd) as entries:
             for entry in entries:
-                match = SEGMENT_NAME.fullmatch(entry.name)
-                if not match:
+                clock_time = _segment_time(entry.name)
+                if clock_time is None:
                     continue
                 info = _regular_file(date_fd, entry.name)
-                if info is None:
-                    continue
-                try:
-                    hour, minute, second = map(int, match[1].split("-"))
-                    when = datetime.datetime.combine(day, datetime.time(hour, minute, second, tzinfo=tzinfo))
-                except ValueError:
-                    continue
-                yield entry.name, when, bool(match[2]), info
+                if info is not None:
+                    when = datetime.datetime.combine(day, clock_time, tzinfo=tzinfo)
+                    yield entry.name, when, entry.name.endswith(".part"), info
     except OSError:
         return
+
+
+def _remove_empty_date(camera_fd, name):
+    with _directory(name, camera_fd) as date_fd:
+        companions = []
+        with os.scandir(date_fd) as entries:
+            for entry in entries:
+                if (not entry.name.startswith("._") or _segment_time(entry.name[2:]) is None or
+                        not entry.is_file(follow_symlinks=False)):
+                    return
+                companions.append(entry.name[2:])
+        for recording in companions:
+            if not _exists(date_fd, recording):
+                _remove_companion(date_fd, recording)
+        # macOS rmdir can discard metadata entries itself, even ._ symlinks.
+        with os.scandir(date_fd) as entries:
+            if next(entries, None) is None:
+                os.rmdir(name, dir_fd=camera_fd)
 
 
 def prune(root, policies, now, free_space, min_free, active=()):
@@ -210,7 +256,7 @@ def _prune(root_fd, root, policies, now, free_space, min_free, active, guard=Non
                     with _directory(path.parent.name, camera_fd) as date_fd:
                         info = _regular_file(date_fd, path.name)
                         if info is not None and os.path.samestat(original, info):
-                            os.unlink(path.name, dir_fd=date_fd)
+                            _unlink_recording(date_fd, path.name)
                             removed.append(path)
                             used -= segment_size
         except OSError:
@@ -245,27 +291,37 @@ def _prune(root_fd, root, policies, now, free_space, min_free, active, guard=Non
             with guard(camera_id) if guard else nullcontext(True) as allowed:
                 if allowed:
                     with _directory(camera_id, root_fd) as camera_fd:
-                        os.rmdir(date.name, dir_fd=camera_fd)
+                        _remove_empty_date(camera_fd, date.name)
         except OSError:
             pass
     return removed, used
 
 
 def _publish(partial, final, source_fd, destination_fd):
-    # Ordinary POSIX rename can overwrite a file. Use the exclusive variants
-    # where available, including on external volumes without hard-link support.
+    # Prefer atomic no-overwrite operations. FAT and exFAT may support neither.
     libc = ctypes.CDLL(None, use_errno=True)
     symbol, flag = ("renameatx_np", 4) if sys.platform == "darwin" else ("renameat2", 1)
     rename = getattr(libc, symbol, None)
     if rename is not None:
         rename.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint)
         if rename(source_fd, os.fsencode(partial), destination_fd, os.fsencode(final), flag) == 0:
-            return
+            _remove_companion(source_fd, partial)
+            return True
         error = ctypes.get_errno()
         if error not in (errno.ENOSYS, errno.ENOTSUP, errno.EINVAL):
             raise OSError(error, "Could not finalize recording")
-    os.link(partial, final, src_dir_fd=source_fd, dst_dir_fd=destination_fd, follow_symlinks=False)
-    os.unlink(partial, dir_fd=source_fd)
+    try:
+        os.link(partial, final, src_dir_fd=source_fd, dst_dir_fd=destination_fd, follow_symlinks=False)
+    except OSError as error:
+        if error.errno not in (errno.ENOTSUP, errno.EPERM, errno.EOPNOTSUPP, errno.EINVAL):
+            raise
+        if _exists(destination_fd, final):
+            return False
+        os.rename(partial, final, src_dir_fd=source_fd, dst_dir_fd=destination_fd)
+        _remove_companion(source_fd, partial)
+    else:
+        _unlink_recording(source_fd, partial)
+    return True
 
 
 class _Segment:
@@ -278,6 +334,11 @@ class _Segment:
                 date_fd = directories.enter_context(_directory(path.parent.name, camera_fd, create=True))
                 file = self._claim(date_fd, path.name, partial.name)
                 if file is not None:
+                    try:
+                        self._identity = os.fstat(file.fileno())
+                    except OSError:
+                        file.close()
+                        raise
                     self._directories = directories.pop_all()
                     self._camera_fd, self._date_fd = camera_fd, date_fd
                     self._file = file
@@ -290,16 +351,8 @@ class _Segment:
         self._good_size = 0
 
     @staticmethod
-    def _exists(parent, name):
-        try:
-            os.stat(name, dir_fd=parent, follow_symlinks=False)
-            return True
-        except FileNotFoundError:
-            return False
-
-    @classmethod
-    def _claim(cls, parent, final, partial):
-        if cls._exists(parent, final):
+    def _claim(parent, final, partial):
+        if _exists(parent, final):
             return None
         try:
             fd = os.open(partial, CREATE_FLAGS, 0o600, dir_fd=parent)
@@ -307,9 +360,9 @@ class _Segment:
             return None
         try:
             # Another recorder may have just finalized this second.
-            if not cls._exists(parent, final):
+            if not _exists(parent, final):
                 return os.fdopen(fd, "wb", buffering=0)
-            os.unlink(partial, dir_fd=parent)
+            _unlink_recording(parent, partial)
         except BaseException:
             os.close(fd)
             raise
@@ -344,28 +397,51 @@ class _Segment:
         self._pending.extend(box)
         return False
 
+    def _refresh_identity(self):
+        # exFAT reports a placeholder inode for a new empty file; it changes once data is
+        # written, so identify the partial from the still-open descriptor, not from creation.
+        try:
+            self._identity = os.fstat(self._file.fileno())
+        except (OSError, ValueError):
+            pass
+
+    def _owns_partial(self):
+        partial = _regular_file(self._date_fd, self.partial.name)
+        if partial is None:
+            return False
+        if os.path.samestat(self._identity, partial):
+            return True
+        # exFAT can report a placeholder inode and a stale modification time through the open
+        # descriptor while the path shows the real ones (measured on macOS); only the device
+        # and the size agree there, so fall back to those.
+        return self._identity.st_dev == partial.st_dev and self._identity.st_size == partial.st_size
+
+    @property
+    def has_video(self):
+        return self._good_size > 0
+
     def finish(self):
         try:
+            if not self._good_size:
+                try:
+                    self._refresh_identity()
+                    self._file.close()
+                finally:
+                    if self._owns_partial():
+                        _unlink_recording(self._date_fd, self.partial.name)
+                return False
             with self._file:
                 # A failed write can leave bytes beyond the last complete mdat.
-                if self._good_size and self._file.tell() != self._good_size:
+                if self._file.tell() != self._good_size:
                     self._file.truncate(self._good_size)
-                info = os.fstat(self._file.fileno())
-            partial = _regular_file(self._date_fd, self.partial.name)
-            if partial is None or not os.path.samestat(info, partial):
-                return False
-            if self._good_size:
-                self._finalize()
-                return True
-            os.unlink(self.partial.name, dir_fd=self._date_fd)
-            return False
+                self._refresh_identity()
+            return self._owns_partial() and self._finalize()
         finally:
             self._directories.close()
 
     def _finalize(self):
         try:
-            _publish(self.partial.name, self.path.name, self._date_fd, self._date_fd)
-            return
+            return _publish(self.partial.name, self.path.name, self._date_fd, self._date_fd)
         except FileExistsError:
             pass
         # A file can appear after the partial was reserved. Keep the recording
@@ -376,13 +452,12 @@ class _Segment:
             when += datetime.timedelta(seconds=1)
             path = segment_path(camera.parent, camera.name, when)
             with _directory(path.parent.name, self._camera_fd, create=True) as destination_fd:
-                if self._exists(destination_fd, path.name + ".part"):
+                if _exists(destination_fd, path.name + ".part"):
                     continue
                 try:
-                    _publish(self.partial.name, path.name, self._date_fd, destination_fd)
+                    return _publish(self.partial.name, path.name, self._date_fd, destination_fd)
                 except FileExistsError:
                     continue
-                return
 
 
 class _Input:
@@ -493,8 +568,10 @@ class BackupService:
         self._running = False
         self._thread = None
         self._workers = {}
+        self._worker_threads = set()
         self._active = set()
         self._last = {}
+        self._save_failures = {}
         self._folder = ""
         self._free = self._total = self._used = self._warning = None
 
@@ -504,18 +581,23 @@ class BackupService:
             settings = state.get("backup", BACKUP_DEFAULTS)
             folder, policies = settings["folder"], settings["cameras"]
             current = folder == self._folder
+            warning = self._warning if current else None
             cameras = []
             for camera in state["cameras"]:
                 camera_id = camera["id"]
                 days = policies.get(camera_id, 0)
                 worker = self._workers.get(camera_id)
                 recording = worker is not None and worker.folder == folder and not worker.cancelled.is_set()
+                camera_state = (worker.state if recording else "waiting") if days else "off"
+                if current and days and self._save_failures.get(camera_id, 0) >= 2:
+                    camera_state = "save_failed"
+                    warning = warning or "save_failed"
                 cameras.append({"id": camera_id, "name": camera["name"], "days": days,
-                                "state": (worker.state if recording else "waiting") if days else "off",
+                                "state": camera_state,
                                 "last": self._last.get(camera_id) if current and days else None})
             return {"folder": folder, "cameras": cameras,
                     "free_bytes": self._free if current else None, "total_bytes": self._total if current else None,
-                    "used_bytes": self._used if current else None, "warning": self._warning if current else None}
+                    "used_bytes": self._used if current else None, "warning": warning}
 
     def configure(self, body):
         if not isinstance(body, dict) or set(body) != {"folder", "cameras"} or not valid_policies(
@@ -559,29 +641,39 @@ class BackupService:
             raise BackupError("folder_readonly") from None
 
     def settings_changed(self):
+        deadline = time.monotonic() + STOP_SECONDS
         with self._lock:
-            self._sync_workers()
+            retiring = self._sync_workers()
             self._wake.set()
+        self._join_threads(retiring, deadline)
 
     def _sync_workers(self):
+        self._worker_threads = {thread for thread in self._worker_threads if thread.is_alive()}
         settings = self.store.get_backup()
         folder, cameras = settings["folder"], settings["cameras"]
         if folder != self._folder:
             self._folder = folder
             self._free = self._total = self._used = self._warning = None
             self._last.clear()
+            self._save_failures.clear()
+        retiring = []
         for camera_id, worker in self._workers.items():
             if not self._running or worker.folder != folder or camera_id not in cameras:
                 worker.cancel()
+            if worker.cancelled.is_set():
+                retiring.append(worker.thread)
         if self._running:
             for camera_id in cameras:
                 if camera_id not in self._workers:
                     worker = self._workers[camera_id] = _Worker(self, camera_id, folder)
                     worker.thread.start()
+                    self._worker_threads.add(worker.thread)
+        return retiring
 
     def start(self):
         with self._lock:
-            if self._running or (self._thread is not None and self._thread.is_alive()):
+            if (self._running or (self._thread is not None and self._thread.is_alive()) or
+                    any(thread.is_alive() for thread in self._worker_threads)):
                 return
             self._running = True
             self._sync_workers()
@@ -590,13 +682,18 @@ class BackupService:
             self._thread.start()
 
     def stop(self):
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + STOP_SECONDS
         with self._lock:
             self._running = False
             for worker in self._workers.values():
                 worker.cancel()
             self._wake.set()
-            threads = [worker.thread for worker in self._workers.values()] + [self._thread]
+            # A worker may already have released its camera slot while it exits.
+            threads = [*self._worker_threads, self._thread]
+        self._join_threads(threads, deadline)
+
+    @staticmethod
+    def _join_threads(threads, deadline):
         for thread in threads:
             if thread is not None and thread is not threading.current_thread():
                 thread.join(max(0, deadline - time.monotonic()))
@@ -730,18 +827,24 @@ class BackupService:
         return self.wait(delay) or worker.cancelled.is_set()
 
     def _finish(self, worker, segment):
-        if segment is not None:
-            try:
-                if segment.finish():
-                    with self._lock:
-                        if worker.folder == self._folder:
-                            self._last[worker.id] = self.now().isoformat()
-            except OSError:
-                # Leave on-disk partials for maintenance if the drive is unavailable.
-                pass
-            finally:
-                with self._file_lock:
-                    self._active.discard(segment.partial)
+        if segment is None:
+            return
+        try:
+            saved = segment.finish()
+        except Exception:
+            # Leave any on-disk partial for maintenance and continue recording.
+            saved = False
+        finally:
+            with self._file_lock:
+                self._active.discard(segment.partial)
+        with self._lock:
+            if worker.folder != self._folder:
+                return
+            if saved:
+                self._last[worker.id] = self.now().isoformat()
+                self._save_failures.pop(worker.id, None)
+            elif segment.has_video:
+                self._save_failures[worker.id] = self._save_failures.get(worker.id, 0) + 1
 
     def _record(self, worker):
         current = _Input(self.open_stream, worker.id, worker.ready, self.clock)
