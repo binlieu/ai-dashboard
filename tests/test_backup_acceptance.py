@@ -190,9 +190,9 @@ class Prune(unittest.TestCase):
         self.assertTrue((self.root / "cam1/2020-03-03/00-00-00.mp4").is_symlink())
 
     def test_low_space_removes_the_oldest_first_across_cameras_until_enough(self):
-        files = [self.make("cam1/2026-11-18/09-00-00.mp4"), self.make("cam4/2026-11-18/09-30-00.mp4"),
-                 self.make("cam1/2026-11-18/10-00-00.mp4"), self.make("cam4/2026-11-18/10-30-00.mp4"),
-                 self.make("cam4/2026-11-18/11-00-00.mp4")]
+        files = [self.make("cam1/2026-11-15/09-00-00.mp4"), self.make("cam4/2026-11-15/09-30-00.mp4"),
+                 self.make("cam1/2026-11-16/10-00-00.mp4"), self.make("cam4/2026-11-16/10-30-00.mp4"),
+                 self.make("cam4/2026-11-17/11-00-00.mp4")]
         free = [MIN_FREE_BYTES - 1, MIN_FREE_BYTES - 1, MIN_FREE_BYTES]
         calls = []
 
@@ -203,12 +203,23 @@ class Prune(unittest.TestCase):
         self.assertEqual(removed, files[:2])
         self.assertEqual([path.exists() for path in files], [False, False, True, True, True])
 
-    def test_low_space_never_removes_files_in_use_and_then_stops(self):
+    def test_low_space_never_touches_the_last_24_hours(self):
+        old = [self.make("cam1/2026-11-16/08-00-00.mp4"), self.make("cam4/2026-11-17/11-59-59.mp4")]
+        last_day = [self.make("cam4/2026-11-17/12-00-00.mp4"), self.make("cam1/2026-11-17/18-00-00.mp4"),
+                    self.make("cam1/2026-11-18/11-54-00.mp4")]
+        removed = prune(self.root, {"cam1": 30, "cam4": 7}, NOW, lambda: 0, MIN_FREE_BYTES)
+        self.assertEqual(removed, old)
+        for path in last_day:
+            self.assertTrue(path.exists(), path)
+        self.assertEqual(prune(self.root, {"cam1": 30, "cam4": 7}, NOW, lambda: 0, MIN_FREE_BYTES), [])
+
+    def test_low_space_never_removes_files_in_use(self):
         active = self.make("cam1/2026-11-18/11-57-00.mp4.part")
-        newest = self.make("cam1/2026-11-18/11-54-00.mp4")
-        removed = prune(self.root, {"cam1": 30}, NOW, lambda: 0, MIN_FREE_BYTES, active=[active])
-        self.assertEqual(removed, [newest])
-        self.assertTrue(active.exists())
+        held = self.make("cam1/2026-11-10/11-54-00.mp4")
+        older = self.make("cam1/2026-11-09/11-54-00.mp4")
+        removed = prune(self.root, {"cam1": 30}, NOW, lambda: 0, MIN_FREE_BYTES, active=[active, held])
+        self.assertEqual(removed, [older])
+        self.assertTrue(active.exists() and held.exists())
 
     def test_abandoned_partial_files_are_cleared_after_an_hour(self):
         stale = self.make("cam1/2026-11-18/10-59-59.mp4.part")
