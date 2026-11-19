@@ -21,6 +21,7 @@ import threading
 import unittest
 from unittest.mock import Mock, patch
 
+from app.backup import BackupError
 from app.devices import DeviceService
 from app.go2rtc import UnixHTTPClient, UnixHTTPConnection
 from app.kasa_control import ControlError
@@ -431,6 +432,39 @@ class ServerTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_backup_routes_and_safe_validation_error(self):
+        service = self.application.backup = Mock()
+        settings = {'folder': str(self.root / 'recordings'), 'cameras': {'cam1': 7}}
+        result = {'folder': settings['folder'], 'cameras': [], 'free_bytes': None,
+                  'total_bytes': None, 'used_bytes': None, 'warning': None}
+        service.status.return_value = service.configure.return_value = result
+        for method, body in (('GET', None), ('PUT', settings)):
+            status, _, response = self.request(method, '/api/backup', body)
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(response), result)
+        service.status.assert_called_once_with()
+        service.configure.assert_called_once_with(settings)
+        service.configure.side_effect = BackupError('folder_missing')
+        status, _, response = self.request('PUT', '/api/backup', settings)
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(response), {
+            'error': 'folder_missing', 'message': 'That folder does not exist. Check that the drive is connected.',
+        })
+        self.assertEqual(self.bridge.applied, [])
+        self.assertEqual(self.upstream.requests, [])
+
+    def test_camera_removal_notifies_backup_and_rollback_preserves_policy(self):
+        service = self.application.backup = Mock()
+        settings = {'folder': str(self.root / 'recordings'), 'cameras': {'cam1': 7}}
+        self.store.set_backup(settings)
+        self.bridge.failures = 1
+        self.assertEqual(self.request('DELETE', '/api/cameras/cam1')[0], 502)
+        self.assertEqual(self.store.get_backup(), settings)
+        service.settings_changed.assert_called_once_with()
+        self.assertEqual(self.request('DELETE', '/api/cameras/cam1')[0], 204)
+        self.assertEqual(self.store.get_backup()['cameras'], {})
+        self.assertEqual(service.settings_changed.call_count, 2)
+
     def test_weather_geocode_does_not_block_camera_mutation_or_frame(self):
         entered, release = threading.Event(), threading.Event()
         results = []
@@ -761,16 +795,26 @@ class MainTests(unittest.TestCase):
         event.is_set.return_value = False
         with patch('app.__main__.Go2RTC') as bridge, patch('app.__main__.DashboardServer') as server, \
                 patch('app.__main__.WeatherService') as weather, \
+                patch('app.__main__.BackupService') as backup, \
                 patch('app.__main__.DeviceClient') as device_client, \
                 patch('app.__main__.DeviceService') as devices, \
                 patch('app.__main__.threading.Event', return_value=event), patch('app.__main__.threading.Thread') as thread, \
                 patch('app.__main__.signal.signal'), patch('app.__main__.webbrowser.open') as browser, \
                 patch('sys.stdout', output):
+            lifecycle = Mock()
+            lifecycle.attach_mock(bridge.return_value.start, 'bridge_start')
+            lifecycle.attach_mock(backup.return_value.start, 'backup_start')
+            lifecycle.attach_mock(backup.return_value.stop, 'backup_stop')
+            lifecycle.attach_mock(bridge.return_value.stop, 'bridge_stop')
             self.assertEqual(main(['--open'], self.root), 0)
             bridge.return_value.start.assert_called_once_with([])
             bridge.return_value.stop.assert_called_once()
             weather.return_value.start.assert_called_once()
             weather.return_value.stop.assert_called_once()
+            self.assertEqual([call[0] for call in lifecycle.mock_calls],
+                             ['bridge_start', 'backup_start', 'backup_stop', 'bridge_stop'])
+            self.assertIs(backup.call_args.args[1], bridge.return_value.open_mp4)
+            self.assertEqual(backup.call_args.args[2], (self.root.resolve(),))
             device_client.assert_called_once_with('dummy@example.com', 'synthetic-password')
             self.assertIs(devices.call_args[0][1], device_client.return_value)
             devices.return_value.start.assert_called_once()

@@ -290,6 +290,36 @@ class Go2RTC:
     def frame(self, camera_id):
         return self.client.frame(camera_id)
 
+    def open_mp4(self, camera_id):
+        if not isinstance(camera_id, str) or not CAMERA_ID.fullmatch(camera_id):
+            raise ValueError("Invalid camera ID")
+        connection = self.client.connection_factory(self.client.path, timeout=20)
+        try:
+            connection.request("GET", "/api/stream.mp4?src=" + camera_id)
+            transport = connection.sock
+            response = connection.getresponse()
+            if response.status != 200:
+                response.close()
+                raise Go2RTCError("The local stream bridge did not provide MP4 video.")
+        except Exception:
+            connection.close()
+            raise
+
+        class MP4Stream:
+            read = response.read
+            read1 = response.read1
+
+            def interrupt(self):
+                transport.shutdown(socket.SHUT_RDWR)
+
+            def close(self):
+                try:
+                    response.close()
+                finally:
+                    connection.close()
+
+        return MP4Stream()
+
     def open_socket(self):
         connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:

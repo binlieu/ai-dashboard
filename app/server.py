@@ -13,6 +13,7 @@ import socket
 import threading
 from urllib.parse import unquote, urlsplit
 
+from .backup import BackupError
 from .discovery import ip_for_mac, sweep_local_network, valid_ip
 from .go2rtc import MAX_FRAME, probe_camera
 from .identify import describe, identify_device
@@ -28,10 +29,11 @@ CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; c
 class DashboardApplication:
     def __init__(self, store, bridge, user, password_b64, lookup=ip_for_mac,
                  sweep=sweep_local_network, probe=probe_camera, initial_cameras=None, weather=None,
-                 identify=identify_device, devices=None):
+                 identify=identify_device, devices=None, backup=None):
         self.store, self.bridge = store, bridge
         self.weather = weather if weather is not None else WeatherService(store)
         self.devices = devices
+        self.backup = backup
         self._user, self._password_b64 = user, password_b64
         self.lookup, self.sweep, self.probe = lookup, sweep, probe
         self.identify = identify
@@ -58,11 +60,11 @@ class DashboardApplication:
             return {"layout": self.store.snapshot()["layout"], "max": MAX_CAMERAS,
                     "cameras": self.camera_list()}
 
-    def _apply_or_restore(self, previous, previous_ips):
+    def _apply_or_restore(self, previous, previous_ips, backup_revision=None):
         try:
             self.bridge.apply(self.camera_list())
         except Exception:
-            self.store.restore(previous)
+            self.store.restore(previous, backup_revision=backup_revision)
             self.ips = previous_ips
             try:
                 self.bridge.apply(self.camera_list())
@@ -102,10 +104,16 @@ class DashboardApplication:
 
     def remove(self, camera_id):
         with self.lock:
-            previous, previous_ips = self.store.snapshot(), self.ips.copy()
-            self.store.remove(camera_id)
+            previous_ips = self.ips.copy()
+            with self.store.lock:
+                previous = self.store.snapshot()
+                backup_revision = self.store.remove(camera_id)
             self.ips.pop(camera_id, None)
-            self._apply_or_restore(previous, previous_ips)
+            try:
+                self._apply_or_restore(previous, previous_ips, backup_revision)
+            finally:
+                if self.backup is not None:
+                    self.backup.settings_changed()
 
     def set_layout(self, body):
         with self.lock:
@@ -285,6 +293,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except WeatherError as error:
             status = {"place_not_found": 404, "weather_unavailable": 502}.get(error.code, 400)
             self._json(status, {"error": error.code, "message": error.message})
+        except BackupError as error:
+            self._json(400, {"error": error.code, "message": error.message})
         except StoreError as error:
             self._json(error.status, {"error": error.code, "message": error.message})
         except (OSError, http.client.HTTPException, RuntimeError, ValueError, TypeError):
@@ -304,6 +314,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 result = application.weather.snapshot()
             else:
                 result = application.weather.configure(self._body())
+            self._json(200, result)
+        elif path == "/api/backup":
+            if application.backup is None:
+                raise StoreError("unavailable", "Camera backup is unavailable.", 503)
+            if self.command == "GET":
+                result = application.backup.status()
+            else:
+                result = application.backup.configure(self._body())
             self._json(200, result)
         elif path == "/api/devices" or path.startswith("/api/devices/"):
             self._device_route(path, application.devices)

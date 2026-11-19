@@ -188,6 +188,27 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(store.get_weather(), WEATHER_DEFAULTS)
         self.assertEqual(self.path.read_bytes(), original)
 
+    def test_backup_rollback_drops_only_cameras_missing_from_the_restored_list(self):
+        store = CameraStore(self.path, {'CAMERA_MAC': MAC})
+        previous = store.snapshot()
+        camera = store.add('aa:bb:cc:dd:ee:02')
+        folder = str(self.path.parent / 'recordings')
+        store.set_backup({'folder': folder, 'cameras': {'cam1': 7, camera['id']: 30}})
+        store.restore(previous)
+        self.assertEqual(store.get_backup(), {'folder': folder, 'cameras': {'cam1': 7}})
+        self.assertEqual(CameraStore(self.path).get_backup(), store.get_backup())
+
+    def test_backup_save_failure_does_not_change_the_previous_file_or_settings(self):
+        store = CameraStore(self.path, {'CAMERA_MAC': MAC})
+        folder = str(self.path.parent / 'recordings')
+        original = {'folder': folder, 'cameras': {'cam1': 7}}
+        store.set_backup(original)
+        before = self.path.read_bytes()
+        with patch('app.store.os.replace', side_effect=OSError('synthetic failure')), self.assertRaises(OSError):
+            store.set_backup({'folder': folder, 'cameras': {'cam1': 30}})
+        self.assertEqual(store.get_backup(), original)
+        self.assertEqual(self.path.read_bytes(), before)
+
     def test_device_mutations_are_atomic_and_do_not_persist_runtime_fields(self):
         store = CameraStore(self.path, {'CAMERA_MAC': MAC})
         device = store.add_device('aa:bb:cc:dd:ee:02', 'Porch')
