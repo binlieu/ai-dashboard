@@ -6,9 +6,17 @@ clock and weather tile, selectable themes, and landscape or portrait screens.
 Cameras are added by MAC address in the built-in Setup screen, and video stays
 on your network.
 
-`./start.sh` serves **http://127.0.0.1:1984/** with Python 3.9 and a pinned
-**go2rtc v1.9.15** bridge. Python uses only its standard library; the page has
-no build step, CDN, Node or npm dependency.
+`./start.sh` serves **http://127.0.0.1:1984/** with Python 3.9 and the go2rtc
+video bridge. The bridge is **go2rtc v1.9.15** on macOS 13 and newer and
+**v1.9.14** on macOS 12. Both releases are pinned by SHA-256 checksum. Python
+uses only its standard library, and the page has no build step, CDN, Node or npm
+dependency.
+
+## Install on a dedicated Mac
+
+Follow the [macOS Monterey installation guide](docs/INSTALL-MAC.md) to start
+the dashboard at login, open it on a wall display, and transfer settings from
+another Mac.
 
 ## Setup
 
