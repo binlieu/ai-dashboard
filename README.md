@@ -10,6 +10,12 @@ on your network.
 **go2rtc v1.9.15** bridge. Python uses only its standard library; the page has
 no build step, CDN, Node or npm dependency.
 
+## Install on a dedicated Mac
+
+Follow the [macOS Monterey installation guide](docs/INSTALL-MAC.md) to start
+the dashboard at login, open it on a wall display, and transfer settings from
+another Mac.
+
 ## Setup
 
 Requires an Apple Silicon or Intel Mac, system `/usr/bin/python3`, a Kasa
