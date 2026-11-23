@@ -9,7 +9,8 @@ Settings (cameras, plugs/switches, layout, weather, backup) can be carried over 
 in one file.
 
 ## Target
-- macOS 12 Monterey on an Intel Mac mini (Late 2014), also macOS 13+ and Apple Silicon.
+- macOS 12 Monterey on an Intel Mac mini (Late 2014). The guide claims Monterey only and says
+  newer versions should work but their settings screens are named differently.
 - `/bin/bash` there is 3.2; `/usr/bin/python3` is Python 3.9 from Apple's Command Line Tools and
   **does not exist as a working interpreter until the tools are installed** (running the stub
   pops up Apple's install dialog). Standard library only.
@@ -37,7 +38,8 @@ Do NOT change `start.sh`, `scripts/setup.sh`, any other `app/` module, `www/`, o
 2. If `xcode-select -p` fails: print that Apple's Command Line Tools are needed, run
    `xcode-select --install` (opens Apple's dialog), tell the user to run the installer again
    when that finishes, and exit 2. Never call `/usr/bin/python3` before this check passes.
-3. `exec /usr/bin/python3 -m app.install "$@"` (default command `install`).
+3. `exec /usr/bin/python3 -m app.install "$@"`. With no command word, or when the first
+   argument starts with `-`, the command is `install` (so `./install.sh --settings FILE` works).
 `Install.command`: `cd` to its directory, run `./install.sh`, and keep the Terminal window
 readable at the end ("Press Return to close"). Both files executable (mode 755).
 
@@ -74,15 +76,22 @@ actions without changing anything outside the terminal; `--home DIR` and an inje
 runner exist for tests):
 - `install [--settings FILE] [--port N] [--no-autostart] [--no-kiosk]`
   1. Refuse a `protected_location` with a clear sentence telling the user to move the folder to
-     their home folder (e.g. `~/kasa-dashboard`) and run again.
+     their home folder (e.g. `~/kasa-dashboard`) and run again. With `--dry-run` report the
+     problem as a warning and continue printing the plan (this repository itself lives under
+     `/Volumes`). A hidden test-only flag `--allow-location` skips the refusal for real runs.
   2. Run `scripts/setup.sh` (downloads and verifies the pinned go2rtc).
   3. If `.env` is missing: ask for the Kasa email (`input`) and password (`getpass`, typed
      twice, never echoed, never placed in argv, environment, logs or any file but `.env`).
      If `.env` exists, keep it and say so.
   4. `--settings FILE` → `import_settings`. Without it, existing settings are kept.
-  5. Unless `--no-autostart`: write the two agents to `~/Library/LaunchAgents/<label>.plist`
-     (mode 644), then for each: `launchctl bootout gui/<uid>/<label>` (ignore failure) and
-     `launchctl bootstrap gui/<uid> <plist>`. `--no-kiosk` skips the kiosk agent (and removes
+  5. Unless `--no-autostart`: create `<repo>/run` (mode 700) if missing — launchd does not
+     create the log's folder and a fresh download has none; check what in the app creates or
+     removes `run/` and make sure the log path survives. Write the two agents to
+     `~/Library/LaunchAgents/<label>.plist` (mode 644), then for each:
+     `launchctl bootout gui/<uid>/<label>` (ignore failure), wait until
+     `launchctl print gui/<uid>/<label>` fails (the old service is really gone; up to 20 s), then
+     `launchctl bootstrap gui/<uid> <plist>`, retrying once after 3 s if it fails. Re-running the
+     installer is the update path, so this must work while the dashboard is running. `--no-kiosk` skips the kiosk agent (and removes
      one left from an earlier install).
   6. Wait up to 60 s for `http://127.0.0.1:<port>/api/cameras` to answer, then print a short
      summary: the address, where the log is, and the remaining manual steps from the guide
@@ -90,6 +99,9 @@ runner exist for tests):
      **only one computer may run the dashboard for the same cameras — stop it on the old one**).
 - `uninstall` → boot out and remove both agents; leaves the project folder, `.env` and
   settings untouched and says so.
+- `login` → ask for the Kasa email and password again, replace `.env` (keeping
+  `DASHBOARD_PORT` if set), and restart the server agent if it is loaded
+  (`launchctl kickstart -k gui/<uid>/<label>`).
 - `export FILE`, `import FILE`, `status` (agents loaded? server answering? settings counts).
 
 ### `scripts/kiosk.sh` (bash 3.2)
@@ -100,14 +112,18 @@ runner exist for tests):
   `open -na "Google Chrome" --args --kiosk --app=<url> --autoplay-policy=no-user-gesture-required
   --disable-session-crashed-bubble --noerrdialogs --no-first-run`; otherwise `open <url>` in the
   default browser (the guide explains pressing Ctrl-Cmd-F once in Safari).
+- `scripts/kiosk.sh --dry-run` prints the URL and the exact command it would run (Chrome kiosk
+  or default browser) and exits without waiting, opening anything or starting caffeinate.
 - Then `exec /usr/bin/caffeinate -d -i -s` so the display and the Mac stay awake for as long as
   the user is logged in.
 
 ### `docs/INSTALL-MAC.md` (generic, public; no personal data)
 Sections: what you need; **on the new Mac before installing** (finish macOS setup, wired
 network recommended, optional Google Chrome for true kiosk mode); **get the project**
-(download the ZIP from the repository page, unzip, move the folder to the home folder and why;
-or `git clone`); **run the installer** (double-click `Install.command`; the first time macOS
+(lead with: open Terminal, run `xcode-select --install`, then `git clone <repository URL>
+~/kasa-dashboard` — this avoids the blocked-script prompt and makes updating
+`git pull` then `./install.sh`; the alternative is downloading the ZIP from the repository
+page, unzipping, and moving the folder to the home folder, with the reason why); **run the installer** (double-click `Install.command`; the first time macOS
 blocks a downloaded script: right-click → Open → Open; or run `./install.sh` in Terminal);
 **bring your settings from another Mac** (`./install.sh export ~/Desktop/kasa-dashboard-settings.json`
 on the old Mac, copy the file, `./install.sh --settings <file>` or `./install.sh import <file>`
