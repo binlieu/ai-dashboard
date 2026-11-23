@@ -7,7 +7,8 @@ macOS versions should work, though the settings screens have different names.
 You’ll need your Kasa account email and password, a display, a keyboard and
 mouse for setup, and a Mac on the same local network as your Kasa devices.
 Internet access is needed to download the project, Apple’s Command Line Tools,
-and the video bridge.
+and the video bridge. The installer uses go2rtc v1.9.14 on macOS 12 and v1.9.15
+on macOS 13 and newer. Both releases are pinned by SHA-256 checksum.
 
 ## On the new Mac before installing
 
