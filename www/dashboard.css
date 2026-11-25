@@ -946,6 +946,59 @@ video-stream .info {
     color: var(--accent);
 }
 
+.fullscreen-forecast {
+    display: none;
+    position: absolute;
+    z-index: 1;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: var(--fullscreen-forecast-height);
+    align-items: center;
+    overflow: hidden;
+    color: var(--text);
+    opacity: 0.5;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    pointer-events: none;
+}
+
+.camera-tile.is-fullscreen > .fullscreen-forecast {
+    display: flex;
+}
+
+.fullscreen-forecast > .forecast-day {
+    gap: 0.2vh;
+    font-size: clamp(14px, min(3.2vh, 3.6vw), 64px);
+    line-height: 1;
+    white-space: normal;
+}
+
+.fullscreen-forecast .weather-icon {
+    width: clamp(20px, 5vh, 96px);
+    height: clamp(20px, 5vh, 96px);
+}
+
+.fullscreen-forecast .forecast-rain {
+    min-height: 1em;
+    color: inherit;
+    font-size: clamp(10px, 2.2vh, 44px);
+}
+
+@media (max-height: 480px) {
+    .fullscreen-forecast > .forecast-day {
+        display: grid;
+        grid-template-columns: auto auto;
+        justify-content: center;
+        justify-items: center;
+        column-gap: 0.25em;
+    }
+
+    .fullscreen-forecast .weather-icon ~ span {
+        grid-column: 1 / -1;
+    }
+}
+
 .camera-grid[data-layout="auto"][data-scrolling="true"] .info-tile {
     aspect-ratio: 16 / 9;
 }
@@ -1393,4 +1446,13 @@ video-stream .info {
 :root[data-theme] .camera-tile:fullscreen .tile-frame,
 :root[data-theme] .camera-tile:fullscreen::after {
     display: none;
+}
+
+.camera-tile.is-fullscreen {
+    --fullscreen-forecast-height: 15vh;
+}
+
+.camera-tile.is-fullscreen > .tile-label,
+.camera-tile.is-fullscreen > .controls {
+    bottom: calc(var(--fullscreen-forecast-height) + 8px);
 }

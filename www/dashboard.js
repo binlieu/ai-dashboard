@@ -293,21 +293,8 @@ function freshWeatherForecast(now = Date.now()) {
         ? forecast : null;
 }
 
-function renderWeather() {
-    const forecast = freshWeatherForecast();
-    find('#info-message').hidden = Boolean(forecast);
-    find('#info-weather').hidden = !forecast;
-    find('#info-message').textContent = weatherData?.status === 'loading' && !weatherData.forecast
-        ? 'Loading weather…' : 'Weather unavailable';
-    if (!forecast) return;
-    const current = forecast.current;
-    find('#info-temperature').textContent = `${current.temp}°`;
-    find('#info-condition').replaceChildren(weatherIcon(current.code, current.is_day), document.createTextNode(conditionFor(current.code)));
-    find('#info-details').textContent = `Feels ${current.feels}° · Wind ${current.wind} ${weatherData.units === 'c' ? 'km/h' : 'mph'}`;
-    find('#info-place').textContent = weatherData.name;
-    find('#info-place').title = weatherData.name;
-    const today = displayDate(displayTimeParts(new Date()));
-    const days = forecast.days.filter(day => day.date >= today).slice(0, 5).map(day => {
+function buildForecastDays(days, today) {
+    return days.filter(day => day.date >= today).slice(0, 5).map(day => {
         const node = document.createElement('div');
         node.className = 'forecast-day';
         const label = document.createElement('span');
@@ -321,7 +308,24 @@ function renderWeather() {
         node.append(label, weatherIcon(day.code), range, rain);
         return node;
     });
-    find('#info-forecast').replaceChildren(...days);
+}
+
+function renderWeather() {
+    const forecast = freshWeatherForecast();
+    const today = forecast && displayDate(displayTimeParts(new Date()));
+    fullscreenTile?.renderFullscreenForecast(forecast, today);
+    find('#info-message').hidden = Boolean(forecast);
+    find('#info-weather').hidden = !forecast;
+    find('#info-message').textContent = weatherData?.status === 'loading' && !weatherData.forecast
+        ? 'Loading weather…' : 'Weather unavailable';
+    if (!forecast) return;
+    const current = forecast.current;
+    find('#info-temperature').textContent = `${current.temp}°`;
+    find('#info-condition').replaceChildren(weatherIcon(current.code, current.is_day), document.createTextNode(conditionFor(current.code)));
+    find('#info-details').textContent = `Feels ${current.feels}° · Wind ${current.wind} ${weatherData.units === 'c' ? 'km/h' : 'mph'}`;
+    find('#info-place').textContent = weatherData.name;
+    find('#info-place').title = weatherData.name;
+    find('#info-forecast').replaceChildren(...buildForecastDays(forecast.days, today));
 }
 
 function acceptWeather(data) {
@@ -505,6 +509,11 @@ class CameraTile {
         this.fullscreenForecast = null;
         fullscreenInfo.append(this.fullscreenClock, this.fullscreenWeather);
         this.card.appendChild(fullscreenInfo);
+        this.fullscreenForecastBand = document.createElement('div');
+        this.fullscreenForecastBand.className = 'fullscreen-forecast';
+        this.fullscreenForecastBand.setAttribute('aria-hidden', 'true');
+        this.fullscreenForecastBand.hidden = true;
+        this.card.appendChild(this.fullscreenForecastBand);
         addIcon(this.snapshotButton, 'M3 7h4l2-3h6l2 3h4v13H3Z M16 13a4 4 0 1 1-8 0 4 4 0 0 1 8 0');
         addIcon(this.fullscreenButton, 'M3 9V3h6 M15 3h6v6 M21 15v6h-6 M9 21H3v-6');
         this.snapshotButton.addEventListener('click', () => this.snapshot());
@@ -740,6 +749,12 @@ class CameraTile {
         const conditions = document.createElement('span');
         conditions.textContent = `${temp}° ${conditionFor(code)}`;
         this.fullscreenWeather.replaceChildren(weatherIcon(code, isDay), conditions);
+    }
+
+    renderFullscreenForecast(forecast, today) {
+        const days = state.weatherEnabled && forecast ? buildForecastDays(forecast.days, today) : [];
+        this.fullscreenForecastBand.hidden = days.length === 0;
+        this.fullscreenForecastBand.replaceChildren(...days);
     }
 
     async fullscreen() {
@@ -1792,7 +1807,10 @@ document.addEventListener('fullscreenchange', () => {
         tile.updateFullscreenLabel();
         if (active) fullscreenTile = tile;
     }
-    fullscreenTile?.renderFullscreenInfo(new Date());
+    if (!fullscreenTile) return;
+    const now = new Date();
+    fullscreenTile.renderFullscreenInfo(now);
+    fullscreenTile.renderFullscreenForecast(freshWeatherForecast(now.getTime()), displayDate(displayTimeParts(now)));
 });
 
 function updateClock() {
