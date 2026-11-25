@@ -15,10 +15,13 @@ on macOS 13 and newer. Both releases are pinned by SHA-256 checksum.
 Finish macOS setup and sign in to the account you’ll use for the wall display.
 Connect the Mac to your network. A wired Ethernet connection is recommended.
 
-Google Chrome is optional. The installer uses kiosk mode if a compatible copy
-of Chrome is already in `/Applications`. Chrome 150 was the last release for
-Monterey. On a fresh Monterey Mac, use the built-in Safari if you don’t have a
-compatible copy of Chrome. [Chrome support history](https://support.google.com/chrome/a/answer/10314655?hl=en)
+Install Firefox from [mozilla.org](https://www.mozilla.org/firefox/) into
+`/Applications` (recommended). The display then opens in Firefox kiosk mode: full
+screen with no address bar, tabs or menu. Firefox still supports Monterey, while
+Safari on Monterey is frozen at version 15.6, which has no kiosk mode and may not
+show the whole dashboard. Without Firefox, the installer uses a compatible Google
+Chrome in kiosk mode, otherwise the default browser. Chrome 150 was the last
+release for Monterey. [Chrome support history](https://support.google.com/chrome/a/answer/10314655?hl=en)
 
 ## Get the project
 
@@ -65,9 +68,9 @@ The installer saves the login in a private `.env` file and keeps it on future
 runs.
 
 The installer starts the server and sets it up to start at each login. The
-dashboard is at `http://127.0.0.1:1984/` by default. With a compatible Chrome
-installed, the display opens in kiosk mode. Otherwise the installer opens the
-default browser. In Safari, press **Control–Command–F** once the page opens to go
+dashboard is at `http://127.0.0.1:1984/` by default. With Firefox (or a
+compatible Chrome) installed, the display opens in kiosk mode. To leave Firefox
+kiosk mode, press **Command–Q**. Otherwise the installer opens the default browser. In Safari, press **Control–Command–F** once the page opens to go
 full-screen. If Safari opens a regular window at a later login, use the shortcut
 again. [Apple’s Mac keyboard shortcuts](https://support.apple.com/en-ie/102650)
 
@@ -184,9 +187,9 @@ window when you’re done.
 - **Password changed?** Run `./install.sh login` to enter the new login and
   restart the server agent if it’s loaded.
 - **Browser didn’t open?** Check the server with `./install.sh status`, then
-  reopen the printed dashboard address. If Chrome opens a normal window while
-  it’s already running, quit Chrome and rerun `./install.sh` to relaunch the
-  kiosk. To run the server without opening a browser, use `./install.sh --no-kiosk`.
+  reopen the printed dashboard address. If the kiosk browser was closed or
+  shows a normal window, rerun `./install.sh` (or log out and back in): it quits
+  the previous kiosk Firefox and starts a fresh full-screen one. To run the server without opening a browser, use `./install.sh --no-kiosk`.
 - **Want to start the server yourself?** Use `./install.sh --no-autostart` and
   then `./start.sh`. If you already enabled login agents, use
   `./install.sh uninstall` to remove them first.
