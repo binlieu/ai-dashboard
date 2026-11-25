@@ -487,7 +487,10 @@ video-stream .info {
     z-index: 1;
     top: 2.5vmin;
     left: 2.5vmin;
-    width: 24%;
+    /* About a quarter of the screen, but never so narrow that the time or weather wraps. */
+    width: max-content;
+    min-width: 24%;
+    max-width: 48%;
     color: #fff;
     opacity: 0.85;
     font-variant-numeric: tabular-nums;
@@ -510,6 +513,7 @@ video-stream .info {
     font-size: clamp(24px, 6.2vw, 200px);
     font-weight: 600;
     line-height: 1;
+    white-space: nowrap;
 }
 
 .fullscreen-info-weather {
@@ -517,6 +521,7 @@ video-stream .info {
     align-items: center;
     justify-content: flex-start;
     gap: 0.35em;
+    white-space: nowrap;
     margin-top: 0.25em;
     font-size: clamp(12px, 1.9vw, 64px);
     line-height: 1.15;
