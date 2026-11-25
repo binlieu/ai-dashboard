@@ -481,6 +481,43 @@ video-stream .info {
     height: 100%;
 }
 
+.fullscreen-info {
+    display: none;
+    position: absolute;
+    z-index: 1;
+    top: 2.5vmin;
+    right: 2.5vmin;
+    max-width: calc(100% - 5vmin);
+    padding: clamp(8px, 1vmin, 24px);
+    border-radius: 4px;
+    background: var(--scrim);
+    color: var(--text);
+    opacity: 0.5;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    pointer-events: none;
+}
+
+.camera-tile.is-fullscreen > .fullscreen-info {
+    display: block;
+}
+
+.fullscreen-info-clock {
+    font-size: clamp(32px, 7vmin, 120px);
+    font-weight: 600;
+    line-height: 1;
+}
+
+.fullscreen-info-weather {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.35em;
+    margin-top: 0.25em;
+    font-size: clamp(16px, 3vmin, 48px);
+    line-height: 1.15;
+}
+
 .empty-slot {
     display: grid;
     place-content: center;
@@ -894,6 +931,11 @@ video-stream .info {
     stroke-width: 1.7;
     stroke-linecap: round;
     stroke-linejoin: round;
+}
+
+.fullscreen-info-weather .weather-icon {
+    width: 1em;
+    height: 1em;
 }
 
 .forecast-rain {

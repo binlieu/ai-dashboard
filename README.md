@@ -228,6 +228,7 @@ Hover over or focus a grid tile or the large Spotlight tile to reveal its
 **Snapshot** and **Fullscreen** icon buttons. Both buttons are keyboard accessible
 while active. Double-click the video area to toggle fullscreen. Strip tiles only
 select the large camera and have no Snapshot or Fullscreen controls.
+A full-screen camera shows the time and, when available, current weather in the top-right corner.
 
 The selected layout is saved across restarts. If saving fails, the new layout
 stays on screen with **Layout not saved** and **Retry save**. Below 700 px the
