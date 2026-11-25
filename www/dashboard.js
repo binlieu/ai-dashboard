@@ -52,6 +52,7 @@ const portraitDisplay = matchMedia('(orientation: portrait) and (min-width: 700p
 dashboard.dataset.orientation = portraitDisplay.matches ? 'portrait' : 'landscape';
 const layouts = ['auto', '2x1', '2x2', '3x3', '4x4', 'spotlight'];
 const tiles = new Map();
+let fullscreenTile = null;
 const rows = new Map();
 const deviceViews = new Map();
 const deviceStates = {on: 'On', off: 'Off', unknown: 'Unknown'};
@@ -281,23 +282,19 @@ function displayDate(parts) {
     return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
 }
 
-function renderWeather() {
+function formatInfoTime(now) {
+    return displayFormatters ? displayFormatters.infoTime.format(now)
+        : now.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+}
+
+function freshWeatherForecast(now = Date.now()) {
     const forecast = weatherData?.forecast;
-    const fresh = forecast && Date.now() / 1000 - forecast.updated <= 3 * 3600;
-    const ready = weatherData?.status === 'ok' && fresh;
-    find('#info-message').hidden = Boolean(ready);
-    find('#info-weather').hidden = !ready;
-    find('#info-message').textContent = weatherData?.status === 'loading' && !forecast
-        ? 'Loading weather…' : 'Weather unavailable';
-    if (!ready) return;
-    const current = forecast.current;
-    find('#info-temperature').textContent = `${current.temp}°`;
-    find('#info-condition').replaceChildren(weatherIcon(current.code, current.is_day), document.createTextNode(conditionFor(current.code)));
-    find('#info-details').textContent = `Feels ${current.feels}° · Wind ${current.wind} ${weatherData.units === 'c' ? 'km/h' : 'mph'}`;
-    find('#info-place').textContent = weatherData.name;
-    find('#info-place').title = weatherData.name;
-    const today = displayDate(displayTimeParts(new Date()));
-    const days = forecast.days.filter(day => day.date >= today).slice(0, 5).map(day => {
+    return weatherData?.status === 'ok' && forecast && now / 1000 - forecast.updated <= 3 * 3600
+        ? forecast : null;
+}
+
+function buildForecastDays(days, today) {
+    return days.filter(day => day.date >= today).slice(0, 5).map(day => {
         const node = document.createElement('div');
         node.className = 'forecast-day';
         const label = document.createElement('span');
@@ -311,7 +308,24 @@ function renderWeather() {
         node.append(label, weatherIcon(day.code), range, rain);
         return node;
     });
-    find('#info-forecast').replaceChildren(...days);
+}
+
+function renderWeather() {
+    const forecast = freshWeatherForecast();
+    const today = forecast && displayDate(displayTimeParts(new Date()));
+    fullscreenTile?.renderFullscreenForecast(forecast, today);
+    find('#info-message').hidden = Boolean(forecast);
+    find('#info-weather').hidden = !forecast;
+    find('#info-message').textContent = weatherData?.status === 'loading' && !weatherData.forecast
+        ? 'Loading weather…' : 'Weather unavailable';
+    if (!forecast) return;
+    const current = forecast.current;
+    find('#info-temperature').textContent = `${current.temp}°`;
+    find('#info-condition').replaceChildren(weatherIcon(current.code, current.is_day), document.createTextNode(conditionFor(current.code)));
+    find('#info-details').textContent = `Feels ${current.feels}° · Wind ${current.wind} ${weatherData.units === 'c' ? 'km/h' : 'mph'}`;
+    find('#info-place').textContent = weatherData.name;
+    find('#info-place').title = weatherData.name;
+    find('#info-forecast').replaceChildren(...buildForecastDays(forecast.days, today));
 }
 
 function acceptWeather(data) {
@@ -338,6 +352,8 @@ function acceptWeather(data) {
         infoDay = '';
         updateClock();
         weatherTick();
+    } else {
+        fullscreenTile?.renderFullscreenInfo(new Date(now));
     }
 }
 
@@ -425,8 +441,8 @@ function weatherTick() {
     if (minute !== infoMinute) {
         infoMinute = minute;
         find('#info-clock').dateTime = now.toISOString();
-        find('#info-clock').textContent = displayFormatters ? displayFormatters.infoTime.format(now)
-            : now.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+        find('#info-clock').textContent = formatInfoTime(now);
+        fullscreenTile?.renderFullscreenInfo(now);
     }
     if (day !== infoDay) {
         infoDay = day;
@@ -482,6 +498,22 @@ class CameraTile {
         this.snapshotButton = this.card.querySelector('.snapshot');
         this.fullscreenButton = this.card.querySelector('.fullscreen');
         this.notice = this.card.querySelector('.notice');
+        const fullscreenInfo = document.createElement('div');
+        fullscreenInfo.className = 'fullscreen-info';
+        fullscreenInfo.setAttribute('aria-hidden', 'true');
+        this.fullscreenClock = document.createElement('div');
+        this.fullscreenClock.className = 'fullscreen-info-clock';
+        this.fullscreenWeather = document.createElement('div');
+        this.fullscreenWeather.className = 'fullscreen-info-weather';
+        this.fullscreenWeather.hidden = true;
+        this.fullscreenForecast = null;
+        fullscreenInfo.append(this.fullscreenClock, this.fullscreenWeather);
+        this.card.appendChild(fullscreenInfo);
+        this.fullscreenForecastBand = document.createElement('div');
+        this.fullscreenForecastBand.className = 'fullscreen-forecast';
+        this.fullscreenForecastBand.setAttribute('aria-hidden', 'true');
+        this.fullscreenForecastBand.hidden = true;
+        this.card.appendChild(this.fullscreenForecastBand);
         addIcon(this.snapshotButton, 'M3 7h4l2-3h6l2 3h4v13H3Z M16 13a4 4 0 1 1-8 0 4 4 0 0 1 8 0');
         addIcon(this.fullscreenButton, 'M3 9V3h6 M15 3h6v6 M21 15v6h-6 M9 21H3v-6');
         this.snapshotButton.addEventListener('click', () => this.snapshot());
@@ -704,6 +736,25 @@ class CameraTile {
         const active = document.fullscreenElement === this.tile;
         this.fullscreenButton.setAttribute('aria-label', `${active ? 'Exit fullscreen for' : 'Fullscreen for'} ${this.camera.name}`);
         this.fullscreenButton.setAttribute('aria-pressed', String(active));
+    }
+
+    renderFullscreenInfo(now) {
+        this.fullscreenClock.textContent = formatInfoTime(now);
+        const forecast = state.weatherEnabled ? freshWeatherForecast(now.getTime()) : null;
+        if (forecast === this.fullscreenForecast) return;
+        this.fullscreenForecast = forecast;
+        this.fullscreenWeather.hidden = !forecast;
+        if (!forecast) return;
+        const {temp, code, is_day: isDay} = forecast.current;
+        const conditions = document.createElement('span');
+        conditions.textContent = `${temp}° ${conditionFor(code)}`;
+        this.fullscreenWeather.replaceChildren(weatherIcon(code, isDay), conditions);
+    }
+
+    renderFullscreenForecast(forecast, today) {
+        const days = state.weatherEnabled && forecast ? buildForecastDays(forecast.days, today) : [];
+        this.fullscreenForecastBand.hidden = days.length === 0;
+        this.fullscreenForecastBand.replaceChildren(...days);
     }
 
     async fullscreen() {
@@ -1747,7 +1798,20 @@ document.addEventListener('visibilitychange', () => {
     tiles.forEach(tile => tile.visibilityChanged());
     updateSummary();
 });
-document.addEventListener('fullscreenchange', () => tiles.forEach(tile => tile.updateFullscreenLabel()));
+document.addEventListener('fullscreenchange', () => {
+    fullscreenTile = null;
+    const element = document.fullscreenElement;
+    for (const tile of tiles.values()) {
+        const active = tile.tile === element;
+        tile.tile.classList.toggle('is-fullscreen', active);
+        tile.updateFullscreenLabel();
+        if (active) fullscreenTile = tile;
+    }
+    if (!fullscreenTile) return;
+    const now = new Date();
+    fullscreenTile.renderFullscreenInfo(now);
+    fullscreenTile.renderFullscreenForecast(freshWeatherForecast(now.getTime()), displayDate(displayTimeParts(now)));
+});
 
 function updateClock() {
     const now = new Date();

@@ -481,6 +481,46 @@ video-stream .info {
     height: 100%;
 }
 
+.fullscreen-info {
+    display: none;
+    position: absolute;
+    z-index: 1;
+    top: 2.5vmin;
+    left: 2.5vmin;
+    width: 24%;
+    color: var(--text);
+    opacity: 0.5;
+    font-variant-numeric: tabular-nums;
+    text-align: left;
+    pointer-events: none;
+}
+
+.camera-tile.is-fullscreen > .fullscreen-info {
+    display: block;
+}
+
+/* The overlay owns the top-left corner of a full-screen tile; tile messages move right. */
+.camera-tile.is-fullscreen > .notice {
+    left: auto;
+    right: 8px;
+}
+
+.fullscreen-info-clock {
+    font-size: clamp(24px, 6.2vw, 200px);
+    font-weight: 600;
+    line-height: 1;
+}
+
+.fullscreen-info-weather {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 0.35em;
+    margin-top: 0.25em;
+    font-size: clamp(12px, 1.9vw, 64px);
+    line-height: 1.15;
+}
+
 .empty-slot {
     display: grid;
     place-content: center;
@@ -896,9 +936,67 @@ video-stream .info {
     stroke-linejoin: round;
 }
 
+.fullscreen-info-weather .weather-icon {
+    width: 1em;
+    height: 1em;
+}
+
 .forecast-rain {
     min-height: 1.15em;
     color: var(--accent);
+}
+
+.fullscreen-forecast {
+    display: none;
+    position: absolute;
+    z-index: 1;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: var(--fullscreen-forecast-height);
+    align-items: center;
+    overflow: hidden;
+    color: var(--text);
+    opacity: 0.5;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    pointer-events: none;
+}
+
+.camera-tile.is-fullscreen > .fullscreen-forecast {
+    display: flex;
+}
+
+.fullscreen-forecast > .forecast-day {
+    gap: 0.2vh;
+    font-size: clamp(14px, min(3.2vh, 3.6vw), 64px);
+    line-height: 1;
+    white-space: normal;
+}
+
+.fullscreen-forecast .weather-icon {
+    width: clamp(20px, 5vh, 96px);
+    height: clamp(20px, 5vh, 96px);
+}
+
+.fullscreen-forecast .forecast-rain {
+    min-height: 1em;
+    color: inherit;
+    font-size: clamp(10px, 2.2vh, 44px);
+}
+
+@media (max-height: 480px) {
+    .fullscreen-forecast > .forecast-day {
+        display: grid;
+        grid-template-columns: auto auto;
+        justify-content: center;
+        justify-items: center;
+        column-gap: 0.25em;
+    }
+
+    .fullscreen-forecast .weather-icon ~ span {
+        grid-column: 1 / -1;
+    }
 }
 
 .camera-grid[data-layout="auto"][data-scrolling="true"] .info-tile {
@@ -1348,4 +1446,13 @@ video-stream .info {
 :root[data-theme] .camera-tile:fullscreen .tile-frame,
 :root[data-theme] .camera-tile:fullscreen::after {
     display: none;
+}
+
+.camera-tile.is-fullscreen {
+    --fullscreen-forecast-height: 15vh;
+}
+
+.camera-tile.is-fullscreen > .tile-label,
+.camera-tile.is-fullscreen > .controls {
+    bottom: calc(var(--fullscreen-forecast-height) + 8px);
 }
