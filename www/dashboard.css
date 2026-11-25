@@ -488,8 +488,8 @@ video-stream .info {
     top: 2.5vmin;
     left: 2.5vmin;
     width: 24%;
-    color: #000;
-    opacity: 0.8;
+    color: #fff;
+    opacity: 0.85;
     font-variant-numeric: tabular-nums;
     text-align: left;
     pointer-events: none;
@@ -499,10 +499,11 @@ video-stream .info {
     display: block;
 }
 
-/* The overlay owns the top-left corner of a full-screen tile; tile messages move right. */
+/* Corners of a full-screen tile are taken (clock, camera name), so tile messages sit top centre. */
 .camera-tile.is-fullscreen > .notice {
-    left: auto;
-    right: 8px;
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
 }
 
 .fullscreen-info-clock {
@@ -956,8 +957,8 @@ video-stream .info {
     height: var(--fullscreen-forecast-height);
     align-items: center;
     overflow: hidden;
-    color: #000;
-    opacity: 0.8;
+    color: #fff;
+    opacity: 0.85;
     font-variant-numeric: tabular-nums;
     text-align: center;
     pointer-events: none;
@@ -1452,18 +1453,32 @@ video-stream .info {
     --fullscreen-forecast-height: 15vh;
 }
 
-.camera-tile.is-fullscreen > .tile-label,
 .camera-tile.is-fullscreen > .controls {
     bottom: calc(var(--fullscreen-forecast-height) + 8px);
 }
 
-/* Full-screen clock, weather and forecast: black at 80% in every theme, icons and rain included. */
+/* Full screen: the clock owns the top-left corner and the forecast the bottom,
+   so the camera name moves to the top-right corner. */
+.camera-tile.is-fullscreen > .tile-label {
+    top: 2.5vmin;
+    right: 2.5vmin;
+    bottom: auto;
+    left: auto;
+}
+
+/* Full-screen clock, weather and forecast must stay readable over any video, bright or dark:
+   white text with a thin dark outline, the same in every theme, icons and rain included. */
 .fullscreen-info, .fullscreen-info *,
 .fullscreen-forecast, .fullscreen-forecast * {
-    color: #000 !important;
+    color: #fff !important;
+}
+
+.fullscreen-info, .fullscreen-forecast {
+    text-shadow: 0 0 1px #000, 0 0 2px #000, 0 0 3px #000, 0 0 8px rgb(0 0 0 / 60%);
 }
 
 .fullscreen-info .weather-icon,
 .fullscreen-forecast .weather-icon {
-    stroke: #000 !important;
+    stroke: #fff !important;
+    filter: drop-shadow(0 0 1px #000) drop-shadow(0 0 2px rgb(0 0 0 / 80%));
 }

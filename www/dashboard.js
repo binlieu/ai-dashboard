@@ -741,14 +741,18 @@ class CameraTile {
     renderFullscreenInfo(now) {
         this.fullscreenClock.textContent = formatInfoTime(now);
         const forecast = state.weatherEnabled ? freshWeatherForecast(now.getTime()) : null;
-        if (forecast === this.fullscreenForecast) return;
+        const today = displayDate(displayTimeParts(now));
+        if (forecast === this.fullscreenForecast && today === this.fullscreenDay) return;
         this.fullscreenForecast = forecast;
-        this.fullscreenWeather.hidden = !forecast;
-        if (!forecast) return;
-        const {temp, code, is_day: isDay} = forecast.current;
+        this.fullscreenDay = today;
+        // Today's forecast for the weather place, e.g. "Springfield · 42° / 26° Cloudy".
+        const day = forecast?.days.find(entry => entry.date === today);
+        this.fullscreenWeather.hidden = !day;
+        if (!day) return;
+        const city = weatherData.name.split(',')[0].trim();
         const conditions = document.createElement('span');
-        conditions.textContent = `${temp}° ${conditionFor(code)}`;
-        this.fullscreenWeather.replaceChildren(weatherIcon(code, isDay), conditions);
+        conditions.textContent = `${city ? `${city} · ` : ''}${day.high}° / ${day.low}° ${conditionFor(day.code)}`;
+        this.fullscreenWeather.replaceChildren(weatherIcon(day.code), conditions);
     }
 
     renderFullscreenForecast(forecast, today) {
