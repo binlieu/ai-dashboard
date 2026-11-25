@@ -228,7 +228,7 @@ Hover over or focus a grid tile or the large Spotlight tile to reveal its
 **Snapshot** and **Fullscreen** icon buttons. Both buttons are keyboard accessible
 while active. Double-click the video area to toggle fullscreen. Strip tiles only
 select the large camera and have no Snapshot or Fullscreen controls.
-A full-screen camera shows the time in a top-left overlay about a quarter of the screen wide and, when weather is available, adds current conditions there and a five-day forecast along the bottom, all at half opacity with no background.
+A full-screen camera shows the time in a top-left overlay about a quarter of the screen wide and, when weather is available, adds current conditions there and a five-day forecast along the bottom, all in black text at 80% opacity with no background.
 
 The selected layout is saved across restarts. If saving fails, the new layout
 stays on screen with **Layout not saved** and **Retry save**. Below 700 px the
