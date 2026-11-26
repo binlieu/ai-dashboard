@@ -78,11 +78,12 @@ let pendingBackup = null;
 let backupRead = null;
 let lastBackupReadAt = -Infinity;
 const state = {
-    cameras: [], max: 16, loaded: false, layout: 'auto', page: 0, pageCount: 1,
+    cameras: [], max: 16, loaded: false, layout: 'auto', page: 0, pageCount: 1, pageSize: 1,
     visible: [], busy: false, videoChangePending: false, restartUntil: 0,
     cameraRevision: 0, layoutRevision: 0, layoutDirty: false,
     spotlight: readSpotlight(), loadFailed: false,
     rotationSeconds: readRotationInterval(),
+    rotationSkip: readRotationSkip(),
     weatherEnabled: false,
 };
 let loadTimer = 0;
@@ -118,6 +119,18 @@ function readRotationInterval() {
     } catch { return 0; }
 }
 
+function readRotationSkip() {
+    try {
+        const ids = JSON.parse(localStorage.getItem('kcd.rotation-skip'));
+        return new Set(Array.isArray(ids) ? ids : []);
+    } catch { return new Set(); }
+}
+
+function saveRotationSkip() {
+    try { localStorage.setItem('kcd.rotation-skip', JSON.stringify([...state.rotationSkip])); }
+    catch { /* Storage can be disabled. */ }
+}
+
 function resetRotation() {
     nextRotationAt = Date.now() + state.rotationSeconds * 1000;
 }
@@ -133,11 +146,15 @@ function changeRotationInterval() {
 function rotateSpotlight() {
     if (!state.rotationSeconds || document.hidden || setupDialog.open || document.fullscreenElement ||
         Date.now() < nextRotationAt) return;
-    // Other layouts use the same timer to step through their pages, wrapping to the first.
     if (effectiveLayout() !== 'spotlight') {
-        if (state.pageCount > 1) {
-            state.page = (state.page + 1) % state.pageCount;
-            renderPage();
+        for (let offset = 1; offset < state.pageCount; offset++) {
+            const page = (state.page + offset) % state.pageCount;
+            const start = page * state.pageSize;
+            if (state.cameras.slice(start, start + state.pageSize).some(camera => !state.rotationSkip.has(camera.id))) {
+                state.page = page;
+                renderPage();
+                break;
+            }
         }
         resetRotation();
         return;
@@ -145,7 +162,7 @@ function rotateSpotlight() {
     const currentIndex = state.cameras.findIndex(camera => camera.id === state.spotlight);
     for (let offset = 1; offset < state.cameras.length; offset++) {
         const camera = state.cameras[(currentIndex + offset) % state.cameras.length];
-        if (state.visible.includes(camera.id) && tiles.get(camera.id)?.state === 'Live') {
+        if (!state.rotationSkip.has(camera.id) && state.visible.includes(camera.id) && tiles.get(camera.id)?.state === 'Live') {
             selectSpotlight(camera.id, {automatic: true});
             return;
         }
@@ -799,6 +816,7 @@ class SetupRow {
         this.node = find('#setup-camera-template').content.firstElementChild.cloneNode(true);
         this.renameForm = this.node.querySelector('.rename-form');
         this.input = this.node.querySelector('.rename-input');
+        this.rotationCheckbox = this.node.querySelector('.rotation-checkbox');
         this.confirmation = this.node.querySelector('.remove-confirmation');
         this.actions = this.node.querySelector('.row-actions');
         this.error = this.node.querySelector('.row-error');
@@ -808,6 +826,7 @@ class SetupRow {
         this.node.querySelector('.cancel-remove').addEventListener('click', () => this.cancel());
         this.node.querySelector('.confirm-remove').addEventListener('click', () => this.remove());
         this.renameForm.addEventListener('submit', event => this.rename(event));
+        this.rotationCheckbox.addEventListener('change', () => this.changeRotation());
         this.update(camera);
     }
 
@@ -819,9 +838,21 @@ class SetupRow {
         this.node.querySelector('.remove-question').textContent = `Remove ${camera.name}?`;
         this.confirmation.setAttribute('aria-label', `Remove ${camera.name}?`);
         this.input.setAttribute('aria-label', `New name for ${camera.name}`);
+        this.rotationCheckbox.checked = !state.rotationSkip.has(camera.id);
+        this.rotationCheckbox.setAttribute('aria-label', `${camera.name} in rotation`);
         this.node.querySelector('.edit-camera').setAttribute('aria-label', `Edit ${camera.name}`);
         this.node.querySelector('.remove-camera').setAttribute('aria-label', `Remove ${camera.name}`);
         this.updateStatus();
+    }
+
+    changeRotation() {
+        const {id, name} = this.camera;
+        const checked = this.rotationCheckbox.checked;
+        if (checked) state.rotationSkip.delete(id);
+        else state.rotationSkip.add(id);
+        saveRotationSkip();
+        resetRotation();
+        announce(checked ? `${name} added to rotation.` : `${name} left out of rotation.`);
     }
 
     updateStatus() {
@@ -1404,6 +1435,11 @@ async function saveBackup(body) {
 
 function reconcile(cameras) {
     const ids = new Set(cameras.map(camera => camera.id));
+    const previousSkipCount = state.rotationSkip.size;
+    for (const id of state.rotationSkip) {
+        if (!ids.has(id)) state.rotationSkip.delete(id);
+    }
+    if (state.rotationSkip.size !== previousSkipCount) saveRotationSkip();
     for (const [id, tile] of tiles) {
         if (!ids.has(id)) {
             tile.destroy();
@@ -1472,6 +1508,7 @@ function renderPage() {
     const geometry = layoutGeometry(layout, orientation, state.cameras.length + (info ? 1 : 0));
     const slots = Math.max(1, geometry.capacity - (info ? 1 : 0));
     const boundedAuto = layout === 'auto' && orientation === 'portrait' && !geometry.scrolling;
+    state.pageSize = slots;
     state.pageCount = Math.max(1, Math.ceil(others.length / slots));
     state.page = Math.max(0, Math.min(state.page, state.pageCount - 1));
     const visible = others.slice(state.page * slots, (state.page + 1) * slots);
