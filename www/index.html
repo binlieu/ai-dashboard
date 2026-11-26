@@ -98,6 +98,7 @@
             </section>
             <section aria-labelledby="cameras-title">
                 <h3 id="cameras-title">Cameras</h3>
+                <p class="field-help">Untick a camera to leave it out of rotation on this display.</p>
                 <p id="setup-empty" class="small-message">No cameras added yet.</p>
                 <fieldset id="manage-fields">
                     <legend class="sr-only">Manage cameras</legend>
@@ -151,8 +152,8 @@
                 </form>
             </section>
             <section aria-labelledby="rotation-title">
-                <h3 id="rotation-title">Spotlight rotation</h3>
-                <label for="rotation-interval">Change the large camera</label>
+                <h3 id="rotation-title">Rotation</h3>
+                <label for="rotation-interval">Change the large camera or page</label>
                 <select id="rotation-interval" aria-describedby="rotation-help">
                     <option value="0" selected>Off</option>
                     <option value="10">Every 10 seconds</option>
@@ -160,7 +161,7 @@
                     <option value="60">Every minute</option>
                     <option value="300">Every 5 minutes</option>
                 </select>
-                <p id="rotation-help" class="field-help">Applies to the Spotlight layout on this display.</p>
+                <p id="rotation-help" class="field-help">Spotlight makes the next checked live camera on the visible strip large. Grid layouts with multiple pages advance to the next page with a checked camera.</p>
             </section>
             <section aria-labelledby="weather-title">
                 <h3 id="weather-title">Clock and weather</h3>
@@ -250,6 +251,9 @@
                 <strong class="row-name"></strong>
             </div>
             <p class="camera-address"><span class="row-mac"></span><span class="row-ip"></span></p>
+            <label class="checkbox-label">
+                <input class="rotation-checkbox" type="checkbox" checked> In rotation
+            </label>
             <div class="row-actions">
                 <button class="edit-camera compact-button" type="button">Edit</button>
                 <button class="remove-camera compact-button" type="button">Remove</button>
