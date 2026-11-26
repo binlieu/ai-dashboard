@@ -186,12 +186,14 @@ for the current visit. If the selected camera is removed, the first configured
 camera takes its place. Paging changes only the strip, and a single camera fills
 the whole video area.
 
-In Setup, **Spotlight rotation** can change the large camera every 10 seconds,
+In Setup, **Rotation** can change the large camera every 10 seconds,
 30 seconds, minute or 5 minutes; it defaults to **Off** and is remembered on this
 display when local storage is available. Rotation chooses only Live cameras on
 the visible strip page and pauses while the tab is hidden, Setup is open, or any
 element is fullscreen. Manual selection restarts the interval; automatic changes
-leave the controls idle and keyboard focus unchanged.
+leave the controls idle and keyboard focus unchanged. In other layouts with more than one page, such
+as 2×1, the same timer shows the next page and wraps from the last page to the
+first; pressing Previous or Next restarts the interval.
 
 In Setup, **Clock and weather** adds an optional info tile. Check **Show the info
 tile**, enter a US **ZIP code or city** (for example `90210` or `Springfield`),

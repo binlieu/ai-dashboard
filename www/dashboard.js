@@ -131,8 +131,17 @@ function changeRotationInterval() {
 }
 
 function rotateSpotlight() {
-    if (!state.rotationSeconds || effectiveLayout() !== 'spotlight' || document.hidden ||
-        setupDialog.open || document.fullscreenElement || Date.now() < nextRotationAt) return;
+    if (!state.rotationSeconds || document.hidden || setupDialog.open || document.fullscreenElement ||
+        Date.now() < nextRotationAt) return;
+    // Other layouts use the same timer to step through their pages, wrapping to the first.
+    if (effectiveLayout() !== 'spotlight') {
+        if (state.pageCount > 1) {
+            state.page = (state.page + 1) % state.pageCount;
+            renderPage();
+        }
+        resetRotation();
+        return;
+    }
     const currentIndex = state.cameras.findIndex(camera => camera.id === state.spotlight);
     for (let offset = 1; offset < state.cameras.length; offset++) {
         const camera = state.cameras[(currentIndex + offset) % state.cameras.length];
@@ -1721,6 +1730,7 @@ function openSetup() {
 function changePage(delta) {
     state.page = Math.max(0, Math.min(state.page + delta, state.pageCount - 1));
     renderPage();
+    resetRotation();
 }
 
 setupButton.addEventListener('click', openSetup);
